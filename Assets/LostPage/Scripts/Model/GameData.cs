@@ -56,6 +56,7 @@ namespace LostPage
         Shop,
         RandomEvent,
         Reward,
+        Tool,
         Boss
     }
 

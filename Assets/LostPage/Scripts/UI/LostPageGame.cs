@@ -19,6 +19,13 @@ namespace LostPage
             Charge
         }
 
+        private enum CardSortMode
+        {
+            UsableFirst,
+            Category,
+            Acquired
+        }
+
         private static readonly string[] TutorialPageTitles =
         {
             "戦闘画面とエーテル",
@@ -55,6 +62,10 @@ namespace LostPage
         private bool _tutorialCompletedThisSession;
         private TutorialStep _tutorialStep;
         private int _remainingCardRewardSelections;
+        private CardSortMode _cardSortMode = CardSortMode.UsableFirst;
+        private readonly List<RectTransform> _enemyRects =
+            new List<RectTransform>();
+        private bool _isResolvingAction;
 
         private void Awake()
         {
@@ -85,6 +96,8 @@ namespace LostPage
             _selectedCard = null;
             _selectedEnemyIndex = 0;
             _remainingCardRewardSelections = 0;
+            _cardSortMode = CardSortMode.UsableFirst;
+            _isResolvingAction = false;
             _message = "接続されているステージを選択してください。";
             ShowCarryToolSelection();
         }
@@ -203,7 +216,9 @@ namespace LostPage
             content.anchorMin = Vector2.zero;
             content.anchorMax = Vector2.zero;
             content.pivot = Vector2.zero;
-            content.sizeDelta = new Vector2(1600, _session.MapContentHeight);
+            content.sizeDelta = new Vector2(
+                _session.MapContentWidth,
+                _session.MapContentHeight);
 
             DrawMapEdges(content);
             DrawMapNodes(content);
@@ -358,6 +373,9 @@ namespace LostPage
                 case StageKind.Reward:
                     ShowRewardStage();
                     break;
+                case StageKind.Tool:
+                    ShowToolStage();
+                    break;
                 default:
                     node.Cleared = true;
                     ShowMap();
@@ -461,6 +479,7 @@ namespace LostPage
 
         private void DrawEnemies(RectTransform root)
         {
+            _enemyRects.Clear();
             var panel = UiFactory.CreatePanel(
                 "Enemies",
                 root,
@@ -519,6 +538,7 @@ namespace LostPage
                     .AddComponent<EnemyCardDropTarget>()
                     .Configure(enemyIndex);
                 button.interactable = enemy.IsAlive;
+                _enemyRects.Add(button.GetComponent<RectTransform>());
                 UiFactory.CreateBar(
                     "HpBar",
                     button.transform,
@@ -687,11 +707,21 @@ namespace LostPage
 
         private void DrawCardRow(RectTransform root)
         {
+            UiFactory.CreateButton(
+                "CardSort",
+                root,
+                new Vector2(0.75f, 0.47f),
+                new Vector2(0.97f, 0.51f),
+                $"並び順：{GetCardSortModeLabel()}",
+                CycleCardSortMode,
+                new Color32(72, 81, 104, 255),
+                18);
+
             var scroll = UiFactory.CreateScrollView(
                 "CardScroll",
                 root,
                 new Vector2(0.03f, 0.235f),
-                new Vector2(0.97f, 0.50f),
+                new Vector2(0.97f, 0.466f),
                 true,
                 false,
                 out var content);
@@ -709,9 +739,7 @@ namespace LostPage
             fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             fitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
 
-            var visibleCards = _session.Player.Deck
-                .Where(ShouldDisplayCard)
-                .ToList();
+            var visibleCards = GetSortedVisibleCards();
             for (var index = 0; index < visibleCards.Count; index++)
             {
                 var cardIndex = index;
@@ -764,6 +792,56 @@ namespace LostPage
             Canvas.ForceUpdateCanvases();
             scroll.horizontalNormalizedPosition = _cardScrollX;
             scroll.onValueChanged.AddListener(value => _cardScrollX = value.x);
+        }
+
+        private List<CardInstance> GetSortedVisibleCards()
+        {
+            var cards = _session.Player.Deck
+                .Where(ShouldDisplayCard);
+            switch (_cardSortMode)
+            {
+                case CardSortMode.UsableFirst:
+                    return cards
+                        .OrderBy(card => _battle.CanUse(card) ? 0 : 1)
+                        .ThenBy(card => CardCatalog.GetCategory(card.Kind))
+                        .ThenBy(card => card.Id)
+                        .ToList();
+                case CardSortMode.Category:
+                    return cards
+                        .OrderBy(card => CardCatalog.GetCategory(card.Kind))
+                        .ThenBy(card => card.Id)
+                        .ToList();
+                case CardSortMode.Acquired:
+                    return cards
+                        .OrderBy(card => card.Id)
+                        .ToList();
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private string GetCardSortModeLabel()
+        {
+            switch (_cardSortMode)
+            {
+                case CardSortMode.UsableFirst:
+                    return "使用可能優先";
+                case CardSortMode.Category:
+                    return "種類別";
+                case CardSortMode.Acquired:
+                    return "入手順";
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private void CycleCardSortMode()
+        {
+            _cardSortMode = (CardSortMode)(
+                ((int)_cardSortMode + 1) %
+                Enum.GetValues(typeof(CardSortMode)).Length);
+            _cardScrollX = 0f;
+            ShowBattle();
         }
 
         private static bool ShouldDisplayCard(CardInstance card)
@@ -1050,7 +1128,9 @@ namespace LostPage
 
         private void UseSelectedCard()
         {
-            if (_selectedCard == null || !_battle.CanUse(_selectedCard))
+            if (_isResolvingAction ||
+                _selectedCard == null ||
+                !_battle.CanUse(_selectedCard))
             {
                 return;
             }
@@ -1067,6 +1147,115 @@ namespace LostPage
                 return;
             }
 
+            var attackTargets = _battle.LastAttackTargetIndices.ToList();
+            if (attackTargets.Count > 0)
+            {
+                _isResolvingAction = true;
+                StartCoroutine(
+                    PlayAttackEffectThenFinish(
+                        usedKind,
+                        attackTargets));
+                return;
+            }
+
+            FinishCardUse(usedKind);
+        }
+
+        private IEnumerator PlayAttackEffectThenFinish(
+            CardKind usedKind,
+            IReadOnlyList<int> targetIndices)
+        {
+            var frames = AttackEffectSet.GetFrames();
+            if (frames.Count == 0)
+            {
+                _isResolvingAction = false;
+                FinishCardUse(usedKind);
+                yield break;
+            }
+
+            var blocker = CreateOverlay("BattleActionBlocker");
+            blocker.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
+            if (usedKind == CardKind.RandomBarrage)
+            {
+                foreach (var targetIndex in targetIndices)
+                {
+                    yield return PlayAttackEffect(
+                        blocker,
+                        frames,
+                        new[] { targetIndex });
+                }
+            }
+            else
+            {
+                yield return PlayAttackEffect(
+                    blocker,
+                    frames,
+                    targetIndices.Distinct().ToArray());
+            }
+
+            if (blocker != null)
+            {
+                Destroy(blocker.gameObject);
+            }
+
+            _isResolvingAction = false;
+            FinishCardUse(usedKind);
+        }
+
+        private IEnumerator PlayAttackEffect(
+            RectTransform parent,
+            IReadOnlyList<Sprite> frames,
+            IReadOnlyList<int> targetIndices)
+        {
+            var images = new List<Image>();
+            foreach (var targetIndex in targetIndices)
+            {
+                if (targetIndex < 0 || targetIndex >= _enemyRects.Count)
+                {
+                    continue;
+                }
+
+                var effect = UiFactory.CreatePanel(
+                    $"AttackEffect_{targetIndex}",
+                    parent,
+                    new Vector2(0.5f, 0.5f),
+                    new Vector2(0.5f, 0.5f),
+                    Color.white);
+                effect.sizeDelta = new Vector2(170f, 170f);
+                effect.position = _enemyRects[targetIndex].position;
+                var image = effect.GetComponent<Image>();
+                image.preserveAspect = true;
+                image.raycastTarget = false;
+                images.Add(image);
+            }
+
+            if (images.Count == 0)
+            {
+                yield break;
+            }
+
+            const float frameDuration = 1f / 12f;
+            foreach (var frame in frames)
+            {
+                foreach (var image in images)
+                {
+                    image.sprite = frame;
+                }
+
+                yield return new WaitForSecondsRealtime(frameDuration);
+            }
+
+            foreach (var image in images)
+            {
+                if (image != null)
+                {
+                    Destroy(image.gameObject);
+                }
+            }
+        }
+
+        private void FinishCardUse(CardKind usedKind)
+        {
             if (_battle.Phase == BattlePhase.Victory)
             {
                 HandleBattleVictory();
@@ -1077,6 +1266,11 @@ namespace LostPage
             if (!IsSelectedEnemyAlive())
             {
                 _selectedEnemyIndex = FindFirstAliveEnemy();
+            }
+
+            if (_cardSortMode == CardSortMode.UsableFirst)
+            {
+                _cardScrollX = 0f;
             }
 
             ShowBattle();
@@ -1306,6 +1500,7 @@ namespace LostPage
                     var carried = tokens
                         .Where((_, index) => selected[index])
                         .ToList();
+                    Destroy(overlay.gameObject);
                     CompleteTurn(carried);
                 },
                 UiFactory.Green,
@@ -1334,10 +1529,61 @@ namespace LostPage
 
         private void CompleteTurn(IReadOnlyList<EtherType> carried)
         {
+            if (_isResolvingAction)
+            {
+                return;
+            }
+
             var advanceToCharge =
                 _tutorialStep == TutorialStep.EndTurn ||
                 _tutorialStep == TutorialStep.Carry;
+            var hpBeforeEnemyTurn = _session.Player.Hp;
             _message = _battle.EndPlayerTurn(carried);
+            if (_session.Player.Hp < hpBeforeEnemyTurn)
+            {
+                _isResolvingAction = true;
+                ShowBattle();
+                StartCoroutine(ShakeThenFinishTurn(advanceToCharge));
+                return;
+            }
+
+            FinishCompletedTurn(advanceToCharge);
+        }
+
+        private IEnumerator ShakeThenFinishTurn(bool advanceToCharge)
+        {
+            var blocker = CreateOverlay("EnemyActionBlocker");
+            blocker.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
+            var originalPosition = _screenRoot.anchoredPosition;
+            const float duration = 0.25f;
+            const float amplitude = 18f;
+            var elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.unscaledDeltaTime;
+                var strength = 1f - Mathf.Clamp01(elapsed / duration);
+                _screenRoot.anchoredPosition =
+                    originalPosition +
+                    new Vector2(
+                        Mathf.Sin(elapsed * 91f),
+                        Mathf.Cos(elapsed * 73f)) *
+                    amplitude *
+                    strength;
+                yield return null;
+            }
+
+            _screenRoot.anchoredPosition = originalPosition;
+            if (blocker != null)
+            {
+                Destroy(blocker.gameObject);
+            }
+
+            _isResolvingAction = false;
+            FinishCompletedTurn(advanceToCharge);
+        }
+
+        private void FinishCompletedTurn(bool advanceToCharge)
+        {
             if (_battle.Phase == BattlePhase.Defeat)
             {
                 ShowDefeat();
@@ -1361,7 +1607,7 @@ namespace LostPage
 
         private void HandleBattleVictory()
         {
-            _session.CompleteCurrentBattle();
+            _session.CompleteCurrentBattle(_battle.Enemies.Count);
             if (_session.CurrentNode.Kind == StageKind.Boss)
             {
                 if (_session.HasNextLayer)
@@ -1401,7 +1647,7 @@ namespace LostPage
                 new Vector2(0.92f, 0.94f),
                 isPresentBoxReward
                     ? "プレゼントボックス　追加カード報酬"
-                    : "戦闘勝利　10ゴールド獲得",
+                    : $"戦闘勝利　{_session.LastBattleGoldReward}ゴールド獲得",
                 42,
                 TextAnchor.MiddleCenter,
                 UiFactory.Accent);
@@ -1493,9 +1739,63 @@ namespace LostPage
                 rareToolMessage);
         }
 
+        private void ShowToolStage()
+        {
+            var choices = _session.CreateToolStageChoices();
+            if (choices.Count == 0)
+            {
+                _session.CurrentNode.Cleared = true;
+                _message = "取得できる通常道具はありませんでした。";
+                ShowMap();
+                ShowMessageDialog("道具の間", _message);
+                return;
+            }
+
+            var root = CreateScreen("ToolStageReward");
+            UiFactory.CreateText(
+                "Title",
+                root,
+                new Vector2(0.08f, 0.80f),
+                new Vector2(0.92f, 0.94f),
+                "道具の間",
+                46,
+                TextAnchor.MiddleCenter,
+                UiFactory.Accent);
+            UiFactory.CreateText(
+                "Prompt",
+                root,
+                new Vector2(0.08f, 0.70f),
+                new Vector2(0.92f, 0.80f),
+                "通常道具を1つ選んで取得してください",
+                29);
+
+            for (var index = 0; index < choices.Count; index++)
+            {
+                var kind = choices[index];
+                var left = 0.13f + index * 0.27f;
+                UiFactory.CreateButton(
+                    $"ToolStage_{kind}",
+                    root,
+                    new Vector2(left, 0.23f),
+                    new Vector2(left + 0.20f, 0.67f),
+                    $"【通常】\n{CarryToolCatalog.GetName(kind)}\n\n" +
+                    CarryToolCatalog.GetDescription(kind),
+                    () =>
+                    {
+                        _session.ClaimCurrentToolStageReward(kind);
+                        _message =
+                            $"{CarryToolCatalog.GetName(kind)}を獲得しました。";
+                        ShowMap();
+                    },
+                    GetCarryToolColor(kind),
+                    24);
+            }
+        }
+
         private void ShowShop()
         {
             ShowMap();
+            var price = _session.ShopCardPrice;
             var overlay = CreateOverlay("ShopOverlay");
             var dialog = UiFactory.CreatePanel(
                 "ShopDialog",
@@ -1509,7 +1809,7 @@ namespace LostPage
                 dialog,
                 new Vector2(0.05f, 0.86f),
                 new Vector2(0.65f, 0.98f),
-                "商人 － カード1枚 20ゴールド",
+                $"商人 － カード1枚 {price}ゴールド",
                 34,
                 TextAnchor.MiddleLeft,
                 UiFactory.Accent);
@@ -1558,23 +1858,11 @@ namespace LostPage
                     $"{CardCatalog.GetName(kind)}\n\n" +
                     $"{CardCatalog.GetShortDescription(kind)}\n\n" +
                     $"{CardCatalog.GetCostText(kind)}\n" +
-                    $"{GetCooldownLabel(kind)}\n20G",
-                    () =>
-                    {
-                        if (_session.TryBuyCard(kind))
-                        {
-                            _message = $"{CardCatalog.GetName(kind)}を購入しました。";
-                        }
-                        else
-                        {
-                            _message = "ゴールドが不足しています。";
-                        }
-
-                        ShowShop();
-                    },
+                    $"{GetCooldownLabel(kind)}\n{price}G",
+                    () => ShowPurchaseConfirmation(kind),
                     UiFactory.GetCardColor(kind),
                     23);
-                button.interactable = _session.Player.Gold >= 20;
+                button.interactable = _session.Player.Gold >= price;
                 var element = button.gameObject.AddComponent<LayoutElement>();
                 element.preferredWidth = 260;
                 element.minWidth = 260;
@@ -1611,6 +1899,73 @@ namespace LostPage
                     20,
                     TextAnchor.MiddleLeft);
             }
+        }
+
+        private void ShowPurchaseConfirmation(CardKind kind)
+        {
+            var price = _session.ShopCardPrice;
+            var goldBefore = _session.Player.Gold;
+            var overlay = CreateOverlay("PurchaseConfirmation");
+            var dialog = UiFactory.CreatePanel(
+                "PurchaseDialog",
+                overlay,
+                new Vector2(0.22f, 0.19f),
+                new Vector2(0.78f, 0.81f),
+                new Color32(42, 45, 59, 255));
+            UiFactory.CreateText(
+                "Title",
+                dialog,
+                new Vector2(0.07f, 0.82f),
+                new Vector2(0.93f, 0.95f),
+                "カード購入の確認",
+                36,
+                TextAnchor.MiddleCenter,
+                UiFactory.Accent);
+            UiFactory.CreateText(
+                "CardDetails",
+                dialog,
+                new Vector2(0.08f, 0.34f),
+                new Vector2(0.92f, 0.80f),
+                $"{CardCatalog.GetName(kind)}\n\n" +
+                $"{CardCatalog.GetShortDescription(kind)}\n" +
+                $"コスト：{CardCatalog.GetCostText(kind)}\n" +
+                $"{GetCooldownLabel(kind)}\n\n" +
+                $"価格：{price}G\n" +
+                $"所持金：{goldBefore}G → {goldBefore - price}G",
+                27,
+                TextAnchor.MiddleCenter);
+            UiFactory.CreateButton(
+                "ConfirmPurchase",
+                dialog,
+                new Vector2(0.53f, 0.09f),
+                new Vector2(0.87f, 0.26f),
+                "購入する",
+                () =>
+                {
+                    if (_session.TryBuyCard(kind))
+                    {
+                        _message =
+                            $"{CardCatalog.GetName(kind)}を{price}Gで購入しました。" +
+                            $" 次の価格は{_session.ShopCardPrice}Gです。";
+                    }
+                    else
+                    {
+                        _message = "ゴールドが不足しています。";
+                    }
+
+                    ShowShop();
+                },
+                UiFactory.Green,
+                27);
+            UiFactory.CreateButton(
+                "CancelPurchase",
+                dialog,
+                new Vector2(0.13f, 0.09f),
+                new Vector2(0.47f, 0.26f),
+                "キャンセル",
+                () => Destroy(overlay.gameObject),
+                new Color32(91, 84, 79, 255),
+                27);
         }
 
         private void ShowBossToolReward()
@@ -1692,6 +2047,7 @@ namespace LostPage
                 $"所持カード {_session.Player.Deck.Count}枚　" +
                 $"所持金 {_session.Player.Gold}G\n" +
                 GetOwnedToolSummary() +
+                $"\n討伐報酬 {_session.LastBattleGoldReward}G" +
                 bossRewardMessage + "\n" +
                 $"到達層 {_session.CurrentLayer}/{RunSession.MaxLayer}",
                 29);
@@ -2255,6 +2611,8 @@ namespace LostPage
                     return "?";
                 case StageKind.Reward:
                     return "▣";
+                case StageKind.Tool:
+                    return "✦";
                 case StageKind.Boss:
                     return "★";
                 default:
@@ -2313,6 +2671,8 @@ namespace LostPage
                     return new Color32(92, 75, 112, 255);
                 case StageKind.Reward:
                     return new Color32(127, 105, 47, 255);
+                case StageKind.Tool:
+                    return new Color32(49, 121, 104, 255);
                 case StageKind.Boss:
                     return new Color32(109, 55, 125, 255);
                 default:
@@ -2468,7 +2828,7 @@ namespace LostPage
             {
                 _tutorialCompletedThisSession = false;
                 _tutorialOfferedThisSession = false;
-                _session.TravelTo(1);
+                TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
             }
 
@@ -2476,7 +2836,7 @@ namespace LostPage
             {
                 _tutorialCompletedThisSession = false;
                 _tutorialOfferedThisSession = true;
-                _session.TravelTo(1);
+                TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
                 _tutorialStep = TutorialStep.Attack;
                 EnsureTutorialCardCost(CardKind.Attack);
@@ -2487,7 +2847,7 @@ namespace LostPage
             {
                 _tutorialCompletedThisSession = false;
                 _tutorialOfferedThisSession = true;
-                _session.TravelTo(1);
+                TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
                 _tutorialStep = TutorialStep.Attack;
                 EnsureTutorialCardCost(CardKind.Attack);
@@ -2504,7 +2864,7 @@ namespace LostPage
                 _session.Player.AddCard(CardKind.StrongDefense);
                 _session.Player.AddCard(CardKind.AutoDefense);
                 _session.Player.AddCard(CardKind.Resonance);
-                _session.TravelTo(1);
+                TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
             }
 
@@ -2576,7 +2936,7 @@ namespace LostPage
                 _session.Player.AddCard(CardKind.GuardCyclePersistent);
                 _session.Player.AddTool(CarryToolKind.RedCrystal);
                 _session.Player.AddTool(CarryToolKind.BlueCrystal);
-                _session.TravelTo(1);
+                TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
                 _selectedCard = expandedCard;
                 EnsureCardCostForValidation(CardKind.GrowthAttack);
@@ -2594,7 +2954,7 @@ namespace LostPage
                     _session.Player.AddCard(CardKind.GuardCyclePersistent);
                 _session.Player.AddTool(CarryToolKind.BlueCrystal);
                 _session.Player.AddTool(CarryToolKind.FirstAttackPierce);
-                _session.TravelTo(1);
+                TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
                 EnsureCardCostForValidation(CardKind.GuardContinuance);
                 _battle.UseCard(statusGuard, 0);
@@ -2617,7 +2977,7 @@ namespace LostPage
 
             if (Array.IndexOf(arguments, "-lostPageCaptureBattle") >= 0)
             {
-                _session.TravelTo(1);
+                TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
             }
 
@@ -2626,7 +2986,7 @@ namespace LostPage
                     "-lostPageCaptureCarryToolBattle") >= 0)
             {
                 _session.Player.AddTool(CarryToolKind.AttackBoost);
-                _session.TravelTo(1);
+                TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
                 _selectedCard = _session.Player.Deck.First(
                     card => card.Kind == CardKind.Attack);
@@ -2637,7 +2997,7 @@ namespace LostPage
             if (Array.IndexOf(arguments, "-lostPageCaptureCostIcons") >= 0)
             {
                 _session.Player.AddCard(CardKind.HeavyAttack);
-                _session.TravelTo(1);
+                TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
                 _selectedCard = _session.Player.Deck.First(
                     card => card.Kind == CardKind.HeavyAttack);
@@ -2649,7 +3009,7 @@ namespace LostPage
             {
                 var cooldownCard =
                     _session.Player.AddCard(CardKind.HeavyAttack);
-                _session.TravelTo(1);
+                TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
                 EnsureCardCostForValidation(CardKind.HeavyAttack);
                 _selectedCard = cooldownCard;
@@ -2667,7 +3027,7 @@ namespace LostPage
                 _session.Player.AddCard(CardKind.Attack);
                 var persistentCard =
                     _session.Player.AddCard(CardKind.Persistent);
-                _session.TravelTo(1);
+                TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
                 EnsureCardCostForValidation(CardKind.Persistent);
                 _selectedCard = persistentCard;
@@ -2686,7 +3046,7 @@ namespace LostPage
             {
                 if (_battle == null)
                 {
-                    _session.TravelTo(1);
+                    TravelToStageForValidation(StageKind.Battle);
                     StartBattle();
                 }
 
@@ -2701,7 +3061,7 @@ namespace LostPage
             {
                 if (_battle == null)
                 {
-                    _session.TravelTo(1);
+                    TravelToStageForValidation(StageKind.Battle);
                     StartBattle();
                 }
 
@@ -2719,7 +3079,7 @@ namespace LostPage
             {
                 if (_battle == null)
                 {
-                    _session.TravelTo(1);
+                    TravelToStageForValidation(StageKind.Battle);
                     StartBattle();
                 }
 
@@ -2994,14 +3354,17 @@ namespace LostPage
                 _session.TravelTo(nextId);
             }
 
-            _session.CompleteCurrentBattle();
+            _session.CompleteCurrentBattle(1);
         }
 
         private void TravelToStageForValidation(StageKind targetKind)
         {
             var nodes = _session.Nodes.ToDictionary(node => node.Id);
             var targetId = nodes.Values
-                .Single(node => node.Kind == targetKind)
+                .Where(node => node.Kind == targetKind)
+                .OrderBy(node => node.Y)
+                .ThenBy(node => node.Id)
+                .First()
                 .Id;
             var previous = new Dictionary<int, int>();
             var visited = new HashSet<int> { _session.CurrentNodeId };

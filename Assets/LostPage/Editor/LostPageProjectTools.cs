@@ -17,6 +17,8 @@ namespace LostPage.Editor
             "Assets/LostPage/Resource/Texture";
         private const string TutorialTextureRoot =
             "Assets/LostPage/Resource/Tutorial";
+        private const string AttackEffectTexturePath =
+            "Assets/LostPage/Resource/Texture/bom.png";
 
         [MenuItem("Lost Page/Setup Project")]
         public static void SetupProject()
@@ -29,6 +31,7 @@ namespace LostPage.Editor
             scene.name = "Main";
             CreateEtherTextureSet();
             CreateTutorialPageSet();
+            CreateAttackEffectSet();
             EditorSceneManager.SaveScene(scene, MainScenePath);
 
             EditorBuildSettings.scenes = new[]
@@ -93,6 +96,57 @@ namespace LostPage.Editor
             }
         }
 
+        private static void CreateAttackEffectSet()
+        {
+            var importer =
+                AssetImporter.GetAtPath(AttackEffectTexturePath) as TextureImporter;
+            if (importer == null)
+            {
+                throw new FileNotFoundException(
+                    $"攻撃エフェクト画像が見つかりません：{AttackEffectTexturePath}",
+                    AttackEffectTexturePath);
+            }
+
+            if (importer.textureType != TextureImporterType.Default ||
+                !importer.alphaIsTransparency ||
+                importer.mipmapEnabled ||
+                importer.wrapMode != TextureWrapMode.Clamp ||
+                importer.npotScale != TextureImporterNPOTScale.None ||
+                importer.textureCompression !=
+                    TextureImporterCompression.Uncompressed)
+            {
+                importer.textureType = TextureImporterType.Default;
+                importer.alphaIsTransparency = true;
+                importer.mipmapEnabled = false;
+                importer.wrapMode = TextureWrapMode.Clamp;
+                importer.npotScale = TextureImporterNPOTScale.None;
+                importer.textureCompression =
+                    TextureImporterCompression.Uncompressed;
+                importer.SaveAndReimport();
+            }
+
+            var texture =
+                AssetDatabase.LoadAssetAtPath<Texture2D>(AttackEffectTexturePath);
+            if (texture == null)
+            {
+                throw new InvalidOperationException(
+                    $"攻撃エフェクト画像を読み込めません：{AttackEffectTexturePath}");
+            }
+
+            if (texture.width != 600 ||
+                texture.height != 120 ||
+                texture.width % 5 != 0)
+            {
+                throw new InvalidOperationException(
+                    "攻撃エフェクト画像は600x120・横5フレームである必要があります。");
+            }
+
+            var effectObject = new GameObject("AttackEffectSet");
+            effectObject
+                .AddComponent<AttackEffectSet>()
+                .Configure(texture, 5);
+        }
+
         private static void CreateSpriteReference(
             Transform parent,
             string objectName,
@@ -139,6 +193,24 @@ namespace LostPage.Editor
         [MenuItem("Lost Page/Validate Model")]
         public static void ValidateModel()
         {
+            var attackEffectTexture =
+                AssetDatabase.LoadAssetAtPath<Texture2D>(
+                    AttackEffectTexturePath);
+            Require(
+                attackEffectTexture != null &&
+                attackEffectTexture.width == 600 &&
+                attackEffectTexture.height == 120,
+                "攻撃エフェクト画像の原寸読み込み");
+            var attackEffectFrame = Sprite.Create(
+                attackEffectTexture,
+                new Rect(0f, 0f, 120f, 120f),
+                new Vector2(0.5f, 0.5f),
+                100f);
+            Require(
+                attackEffectFrame != null,
+                "攻撃エフェクトの横5フレーム分割");
+            UnityEngine.Object.DestroyImmediate(attackEffectFrame);
+
             var session = new RunSession(12345);
             Require(session.Player.MaxHp == 100, "プレイヤー最大HP");
             Require(session.Player.Hp == 100, "プレイヤー初期HP");
@@ -243,7 +315,11 @@ namespace LostPage.Editor
                 attackBattle.CanUse(attackPlayer.Deck[0]),
                 "攻撃カード使用条件");
             attackBattle.UseCard(attackPlayer.Deck[0], 0);
-            Require(target.Hp == 25, "攻撃カードの5ダメージ");
+            Require(
+                target.Hp == 25 &&
+                attackBattle.LastAttackTargetIndices.SequenceEqual(
+                    new[] { 0 }),
+                "攻撃カードの5ダメージと演出対象");
             Require(
                 attackPlayer.Deck[0].CooldownRemaining == 1 &&
                 !attackBattle.CanUse(attackPlayer.Deck[0]),
@@ -313,8 +389,10 @@ namespace LostPage.Editor
                 new System.Random(4));
             areaBattle.UseCard(areaCard, -1);
             Require(
-                areaTargets.All(enemy => enemy.Hp == 21),
-                "薙ぎ払いの全体9ダメージ");
+                areaTargets.All(enemy => enemy.Hp == 21) &&
+                areaBattle.LastAttackTargetIndices.SequenceEqual(
+                    new[] { 0, 1 }),
+                "薙ぎ払いの全体9ダメージと同時演出対象");
 
             var strongDefensePlayer = new PlayerState();
             strongDefensePlayer.Deck.Clear();
@@ -563,8 +641,11 @@ namespace LostPage.Editor
                 (EtherType.Red, 4));
             barrageBattle.UseCard(barrageCard, -1);
             Require(
-                barrageTarget.Hp == 60,
-                "乱撃の10ダメージ4回");
+                barrageTarget.Hp == 60 &&
+                barrageBattle.LastAttackTargetIndices.Count == 4 &&
+                barrageBattle.LastAttackTargetIndices.All(
+                    index => index == 0),
+                "乱撃の10ダメージ4回と連続演出対象");
 
             var barragePiercePlayer = new PlayerState();
             barragePiercePlayer.Deck.Clear();
@@ -1063,6 +1144,25 @@ namespace LostPage.Editor
                 !toolSession.Player.CanAddTool(CarryToolKind.EnergyCore),
                 "大きな鞄以外のボス道具は1個上限");
 
+            var toolStageSession = new RunSession(27182);
+            MoveToStage(toolStageSession, StageKind.Tool);
+            var toolStageChoices =
+                toolStageSession.CreateToolStageChoices();
+            Require(
+                toolStageChoices.Count == 3 &&
+                toolStageChoices.Distinct().Count() == 3 &&
+                toolStageChoices.All(
+                    kind =>
+                        CarryToolCatalog.GetRarity(kind) ==
+                        CarryToolRarity.Normal),
+                "道具マスは通常道具の重複なし3択");
+            var claimedTool = toolStageChoices[0];
+            toolStageSession.ClaimCurrentToolStageReward(claimedTool);
+            Require(
+                toolStageSession.Player.GetToolCount(claimedTool) == 1 &&
+                toolStageSession.CurrentNode.Cleared,
+                "道具マスの道具取得と完了状態");
+
             var rareRewardFound = false;
             for (var seed = 1;
                  seed <= 500 && !rareRewardFound;
@@ -1149,15 +1249,30 @@ namespace LostPage.Editor
             Require(
                 !shopSession.TravelTo(shopNodeId),
                 "訪問済みショップへの再訪");
-            shopSession.Player.Gold = 20;
+            shopSession.Player.Gold = 100;
             Require(
+                shopSession.ShopCardPrice ==
+                    RunSession.InitialShopCardPrice &&
                 shopSession.TryBuyCard(CardKind.HeavyAttack) &&
+                shopSession.ShopCardPrice == 25 &&
+                shopSession.Player.Gold == 80 &&
                 shopSession.Player.Deck.Any(
                     card => card.Kind == CardKind.HeavyAttack),
-                "追加カードのショップ購入");
+                "ショップ初回購入と5G値上げ");
+            Require(
+                shopSession.TryBuyCard(CardKind.StrongDefense) &&
+                shopSession.ShopCardPrice == 30 &&
+                shopSession.Player.Gold == 55,
+                "ショップ購入ごとの累積値上げ");
+            shopSession.Player.Gold = 29;
+            Require(
+                !shopSession.TryBuyCard(CardKind.Charge) &&
+                shopSession.ShopCardPrice == 30 &&
+                shopSession.Player.Gold == 29,
+                "購入失敗時は価格を据え置く");
 
-            Require(session.CanTravelTo(1), "左ルートへの移動");
-            Require(session.CanTravelTo(2), "右ルートへの移動");
+            Require(session.CanTravelTo(1), "最初のマップ列への移動");
+            Require(!session.CanTravelTo(2), "未接続ノードへの移動禁止");
             var firstLayerBossId = session.Nodes
                 .Single(node => node.Kind == StageKind.Boss)
                 .Id;
@@ -1170,59 +1285,118 @@ namespace LostPage.Editor
             layeredSession.Player.Gold = 25;
             layeredSession.Player.AddCard(CardKind.HeavyAttack);
             var carriedDeckCount = layeredSession.Player.Deck.Count;
+            var bossHpByLayer = new[] { 120, 240, 480, 800, 1200 };
+            var normalHpPercentByLayer =
+                new[] { 100, 150, 250, 400, 700 };
+            var minimumEnemyCountByLayer =
+                new[] { 1, 1, 1, 2, 2 };
+            var maximumEnemyCountByLayer =
+                new[] { 2, 2, 3, 3, 3 };
+            var minimumRandomEventsByLayer =
+                new[] { 2, 4, 7, 11, 15 };
+            var maximumRandomEventsByLayer =
+                new[] { 3, 5, 9, 13, 17 };
             for (var layer = 1; layer <= RunSession.MaxLayer; layer++)
             {
+                var rowCount = layer + 3;
+                var intermediateNodeCount =
+                    rowCount * (rowCount + 1) / 2;
+                var randomEventCount = layeredSession.Nodes.Count(
+                    node => node.Kind == StageKind.RandomEvent);
+                var battleNodeCount = layeredSession.Nodes.Count(
+                    node => node.Kind == StageKind.Battle);
                 Require(
                     layeredSession.CurrentLayer == layer,
                     $"{layer}層の層番号");
                 Require(
-                    layeredSession.Nodes.Count == 10 + (layer - 1) * 2,
+                    layeredSession.Nodes.Count ==
+                    intermediateNodeCount + 2,
                     $"{layer}層のステージ数");
                 Require(
-                    layeredSession.Nodes.Count(
-                        node => node.Kind == StageKind.Battle) ==
-                    4 + (layer - 1) * 2,
-                    $"{layer}層の通常戦闘数");
+                    HasExpandingMapRows(layeredSession, rowCount),
+                    $"{layer}層の1列ずつ広がるマップ構造");
                 Require(
                     layeredSession.Nodes.Count(
                         node => node.Kind == StageKind.Fountain) == 1 &&
                     layeredSession.Nodes.Count(
                         node => node.Kind == StageKind.Shop) == 1 &&
                     layeredSession.Nodes.Count(
-                        node => node.Kind == StageKind.RandomEvent) == 1 &&
-                    layeredSession.Nodes.Count(
                         node => node.Kind == StageKind.Reward) == 1 &&
                     layeredSession.Nodes.Count(
+                        node => node.Kind == StageKind.Tool) == 1 &&
+                    layeredSession.Nodes.Count(
                         node => node.Kind == StageKind.Boss) == 1,
-                    $"{layer}層の特殊ステージ構成");
+                    $"{layer}層の固定特殊ステージ構成");
+                Require(
+                    randomEventCount >=
+                        minimumRandomEventsByLayer[layer - 1] &&
+                    randomEventCount <=
+                        maximumRandomEventsByLayer[layer - 1],
+                    $"{layer}層のランダムイベント数");
+                Require(
+                    randomEventCount + 4 > battleNodeCount,
+                    $"{layer}層はイベント系マスが戦闘マスより多い");
                 Require(
                     IsCurrentMapConnected(layeredSession),
                     $"{layer}層のマップ接続");
 
-                var firstBattleNode = layeredSession.Nodes
-                    .Where(node => node.Kind == StageKind.Battle)
-                    .OrderBy(node => node.Y)
-                    .ThenBy(node => node.Id)
-                    .First();
-                layeredSession.TravelTo(firstBattleNode.Id);
+                MoveToStage(layeredSession, StageKind.Battle);
                 var scaledBattle = layeredSession.CreateBattleForCurrentNode();
-                var hpPercent = 100 + (layer - 1) * 20;
-                var expectedHp = (30 * hpPercent + 99) / 100;
-                var expectedAttack = 7 + (layer - 1) / 2;
                 Require(
-                    scaledBattle.Enemies[0].MaxHp == expectedHp,
-                    $"{layer}層の敵HP補正");
+                    scaledBattle.Enemies.Count >=
+                        minimumEnemyCountByLayer[layer - 1] &&
+                    scaledBattle.Enemies.Count <=
+                        maximumEnemyCountByLayer[layer - 1] &&
+                    scaledBattle.Enemies
+                        .Select(enemy => enemy.Name)
+                        .Distinct()
+                        .Count() == scaledBattle.Enemies.Count,
+                    $"{layer}層の通常敵1～3体・重複なし編成");
                 Require(
-                    scaledBattle.Enemies[0].Attack == expectedAttack,
-                    $"{layer}層の敵攻撃力補正");
+                    scaledBattle.Enemies.All(
+                        enemy =>
+                            enemy.MaxHp ==
+                            Math.Min(
+                                400,
+                                (GetBaseEnemyHp(enemy.Name) *
+                                 normalHpPercentByLayer[layer - 1] +
+                                 99) /
+                                100) &&
+                            enemy.MaxHp <= 400 &&
+                            enemy.Attack ==
+                            GetBaseEnemyAttack(enemy.Name) +
+                            (layer - 1) / 2),
+                    $"{layer}層の通常敵HP補正・400上限・攻撃補正");
+                var goldBeforeRegularBattle =
+                    layeredSession.Player.Gold;
+                var regularReward =
+                    layeredSession.CompleteCurrentBattle(
+                        scaledBattle.Enemies.Count);
+                Require(
+                    regularReward >= scaledBattle.Enemies.Count * 10 &&
+                    regularReward <= scaledBattle.Enemies.Count * 15 &&
+                    layeredSession.Player.Gold ==
+                        goldBeforeRegularBattle + regularReward,
+                    $"{layer}層の敵1体ごとの10～15G報酬");
 
                 MoveToBoss(layeredSession);
                 var bossBattle = layeredSession.CreateBattleForCurrentNode();
                 Require(
+                    bossBattle.Enemies.Count == 1 &&
                     bossBattle.Enemies[0].MaxHp ==
-                    (80 * hpPercent + 99) / 100,
-                    $"{layer}層のボスHP補正");
-                layeredSession.CompleteCurrentBattle();
+                        bossHpByLayer[layer - 1],
+                    $"{layer}層のボスHP");
+                var goldBeforeBoss = layeredSession.Player.Gold;
+                var bossReward =
+                    layeredSession.CompleteCurrentBattle(
+                        bossBattle.Enemies.Count);
+                Require(
+                    bossReward >= 110 &&
+                    bossReward <= 165 &&
+                    layeredSession.LastBattleGoldReward == bossReward &&
+                    layeredSession.Player.Gold ==
+                        goldBeforeBoss + bossReward,
+                    $"{layer}層のボス追加100～150G報酬");
                 var expectedMaxHp = 100 + layer * 10;
                 Require(
                     layeredSession.Player.MaxHp == expectedMaxHp &&
@@ -1239,7 +1413,6 @@ namespace LostPage.Editor
                     Require(
                         layeredSession.Player.Hp == expectedMaxHp &&
                         layeredSession.Player.MaxHp == expectedMaxHp &&
-                        layeredSession.Player.Gold == 25 &&
                         layeredSession.Player.Deck.Count == carriedDeckCount,
                         $"{layer + 1}層へのプレイヤー状態引き継ぎ");
                 }
@@ -1274,6 +1447,106 @@ namespace LostPage.Editor
             }
 
             return visited.Count == nodes.Count;
+        }
+
+        private static bool HasExpandingMapRows(
+            RunSession session,
+            int expectedRowCount)
+        {
+            var start = session.Nodes.Single(
+                node => node.Kind == StageKind.Start);
+            var boss = session.Nodes.Single(
+                node => node.Kind == StageKind.Boss);
+            var rows = session.Nodes
+                .Where(
+                    node =>
+                        node.Kind != StageKind.Start &&
+                        node.Kind != StageKind.Boss)
+                .GroupBy(node => node.Y)
+                .OrderBy(group => group.Key)
+                .Select(group => group.OrderBy(node => node.X).ToList())
+                .ToList();
+            if (rows.Count != expectedRowCount ||
+                start.Neighbors.Length != 1 ||
+                !start.Neighbors.Contains(rows[0][0].Id) ||
+                boss.Neighbors.Length != expectedRowCount)
+            {
+                return false;
+            }
+
+            for (var rowIndex = 0;
+                 rowIndex < rows.Count;
+                 rowIndex++)
+            {
+                var row = rows[rowIndex];
+                if (row.Count != rowIndex + 1)
+                {
+                    return false;
+                }
+
+                if (rowIndex == rows.Count - 1)
+                {
+                    if (row.Any(node => !node.Neighbors.Contains(boss.Id)))
+                    {
+                        return false;
+                    }
+
+                    continue;
+                }
+
+                var nextRow = rows[rowIndex + 1];
+                for (var column = 0; column < row.Count; column++)
+                {
+                    if (!row[column].Neighbors.Contains(nextRow[column].Id) ||
+                        !row[column].Neighbors.Contains(
+                            nextRow[column + 1].Id))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        private static int GetBaseEnemyHp(string enemyName)
+        {
+            switch (enemyName)
+            {
+                case "紙喰らい":
+                case "墨の影A":
+                case "墨の影B":
+                    return 30;
+                case "失稿の番人":
+                    return 50;
+                case "綴じ糸の獣":
+                    return 45;
+                case "破れた騎士":
+                    return 55;
+                default:
+                    throw new InvalidOperationException(
+                        $"未知の通常敵です：{enemyName}");
+            }
+        }
+
+        private static int GetBaseEnemyAttack(string enemyName)
+        {
+            switch (enemyName)
+            {
+                case "紙喰らい":
+                    return 7;
+                case "墨の影A":
+                case "墨の影B":
+                    return 6;
+                case "失稿の番人":
+                case "破れた騎士":
+                    return 9;
+                case "綴じ糸の獣":
+                    return 8;
+                default:
+                    throw new InvalidOperationException(
+                        $"未知の通常敵です：{enemyName}");
+            }
         }
 
         private static void SetCurrentEther(
@@ -1314,7 +1587,10 @@ namespace LostPage.Editor
         {
             var nodes = session.Nodes.ToDictionary(node => node.Id);
             var targetId = nodes.Values
-                .Single(node => node.Kind == targetKind)
+                .Where(node => node.Kind == targetKind)
+                .OrderBy(node => node.Y)
+                .ThenBy(node => node.Id)
+                .First()
                 .Id;
             var previous = new Dictionary<int, int>();
             var visited = new HashSet<int> { session.CurrentNodeId };

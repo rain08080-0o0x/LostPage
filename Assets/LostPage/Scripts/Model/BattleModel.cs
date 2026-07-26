@@ -8,6 +8,8 @@ namespace LostPage
     {
         private readonly PlayerState _player;
         private readonly Random _random;
+        private readonly List<int> _lastAttackTargetIndices =
+            new List<int>();
 
         public BattleModel(
             PlayerState player,
@@ -59,6 +61,8 @@ namespace LostPage
         public string BattleStartMessage { get; private set; }
         public string TurnStartMessage { get; private set; }
         public PlayerState Player => _player;
+        public IReadOnlyList<int> LastAttackTargetIndices =>
+            _lastAttackTargetIndices;
 
         public bool HasUsableCard =>
             Phase == BattlePhase.PlayerTurn && _player.Deck.Any(CanUse);
@@ -181,6 +185,7 @@ namespace LostPage
 
             var cost = CardCatalog.GetCost(card.Kind);
             var guardCycleStacksBeforeUse = GuardCycleStacks;
+            _lastAttackTargetIndices.Clear();
             Pool.Pay(cost);
 
             string message;
@@ -300,6 +305,7 @@ namespace LostPage
             var damage = PreviewValue(card);
             ConsumeOneShotModifiers();
             var target = Enemies[targetIndex];
+            _lastAttackTargetIndices.Add(targetIndex);
             var pierced = ConsumePenetration();
             if (pierced)
             {
@@ -325,8 +331,15 @@ namespace LostPage
             var damage = PreviewValue(kind);
             ConsumeOneShotModifiers();
             var pierced = innatePiercing || ConsumePenetration();
-            foreach (var enemy in Enemies.Where(enemy => enemy.IsAlive))
+            for (var index = 0; index < Enemies.Count; index++)
             {
+                var enemy = Enemies[index];
+                if (!enemy.IsAlive)
+                {
+                    continue;
+                }
+
+                _lastAttackTargetIndices.Add(index);
                 if (pierced)
                 {
                     enemy.ReceiveDamageIgnoringShield(damage);
@@ -352,15 +365,20 @@ namespace LostPage
             var hits = new List<string>();
             for (var hit = 0; hit < 4; hit++)
             {
-                var targets = Enemies
-                    .Where(enemy => enemy.IsAlive)
+                var targetIndices = Enemies
+                    .Select((enemy, index) => (Enemy: enemy, Index: index))
+                    .Where(pair => pair.Enemy.IsAlive)
+                    .Select(pair => pair.Index)
                     .ToList();
-                if (targets.Count == 0)
+                if (targetIndices.Count == 0)
                 {
                     break;
                 }
 
-                var target = targets[_random.Next(targets.Count)];
+                var targetIndex =
+                    targetIndices[_random.Next(targetIndices.Count)];
+                var target = Enemies[targetIndex];
+                _lastAttackTargetIndices.Add(targetIndex);
                 var pierced = ConsumePenetration();
                 if (pierced)
                 {

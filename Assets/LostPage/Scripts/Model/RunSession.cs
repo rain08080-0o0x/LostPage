@@ -21,8 +21,140 @@ namespace LostPage
     public sealed class RunSession
     {
         public const int MaxLayer = 5;
+        public const int InitialShopCardPrice = 20;
+        public const int ShopCardPriceIncrease = 5;
+
+        private static readonly int[] BossHpByLayer =
+        {
+            120,
+            240,
+            480,
+            800,
+            1200
+        };
+
+        private static readonly int[] NormalHpPercentByLayer =
+        {
+            100,
+            150,
+            250,
+            400,
+            700
+        };
+
+        private static readonly int[] MinimumEnemyCountByLayer =
+        {
+            1,
+            1,
+            1,
+            2,
+            2
+        };
+
+        private static readonly int[] MaximumEnemyCountByLayer =
+        {
+            2,
+            2,
+            3,
+            3,
+            3
+        };
+
+        private static readonly int[] MinimumRandomEventCountByLayer =
+        {
+            2,
+            4,
+            7,
+            11,
+            15
+        };
+
+        private static readonly int[] MaximumRandomEventCountByLayer =
+        {
+            3,
+            5,
+            9,
+            13,
+            17
+        };
+
+        private static readonly EnemyTemplate[] EnemyTemplates =
+        {
+            new EnemyTemplate(
+                "紙喰らい",
+                30,
+                7,
+                6,
+                EnemyActionKind.Attack,
+                EnemyActionKind.Defense,
+                EnemyActionKind.Weaken),
+            new EnemyTemplate(
+                "墨の影A",
+                30,
+                6,
+                5,
+                EnemyActionKind.Attack,
+                EnemyActionKind.Weaken,
+                EnemyActionKind.Defense),
+            new EnemyTemplate(
+                "墨の影B",
+                30,
+                6,
+                5,
+                EnemyActionKind.Defense,
+                EnemyActionKind.Attack,
+                EnemyActionKind.Weaken),
+            new EnemyTemplate(
+                "失稿の番人",
+                50,
+                9,
+                8,
+                EnemyActionKind.Weaken,
+                EnemyActionKind.Attack,
+                EnemyActionKind.Defense,
+                EnemyActionKind.Attack),
+            new EnemyTemplate(
+                "綴じ糸の獣",
+                45,
+                8,
+                7,
+                EnemyActionKind.Attack,
+                EnemyActionKind.Attack,
+                EnemyActionKind.Defense),
+            new EnemyTemplate(
+                "破れた騎士",
+                55,
+                9,
+                8,
+                EnemyActionKind.Defense,
+                EnemyActionKind.Weaken,
+                EnemyActionKind.Attack)
+        };
 
         private Dictionary<int, MapNode> _nodes;
+
+        private sealed class EnemyTemplate
+        {
+            public EnemyTemplate(
+                string name,
+                int baseHp,
+                int baseAttack,
+                int defense,
+                params EnemyActionKind[] pattern)
+            {
+                Name = name;
+                BaseHp = baseHp;
+                BaseAttack = baseAttack;
+                Defense = defense;
+                Pattern = pattern;
+            }
+
+            public string Name { get; }
+            public int BaseHp { get; }
+            public int BaseAttack { get; }
+            public int Defense { get; }
+            public EnemyActionKind[] Pattern { get; }
+        }
 
         public RunSession(int randomSeed = 0)
         {
@@ -39,9 +171,12 @@ namespace LostPage
         public Random Random { get; }
         public int CurrentLayer { get; private set; }
         public int CurrentNodeId { get; private set; }
+        public int ShopCardPrice { get; private set; } = InitialShopCardPrice;
+        public int LastBattleGoldReward { get; private set; }
         public IReadOnlyCollection<MapNode> Nodes => _nodes.Values;
         public MapNode CurrentNode => _nodes[CurrentNodeId];
         public bool HasNextLayer => CurrentLayer < MaxLayer;
+        public float MapContentWidth => _nodes.Values.Max(node => node.X) + 300f;
         public float MapContentHeight => _nodes.Values.Max(node => node.Y) + 200f;
 
         public bool CanTravelTo(int nodeId)
@@ -77,7 +212,7 @@ namespace LostPage
                 Random);
         }
 
-        public void CompleteCurrentBattle()
+        public int CompleteCurrentBattle(int defeatedEnemyCount)
         {
             if (CurrentNode.Kind == StageKind.Boss &&
                 !CurrentNode.Cleared)
@@ -85,11 +220,22 @@ namespace LostPage
                 Player.IncreaseMaxHpAndHealToFull(10);
             }
 
-            CurrentNode.Cleared = true;
-            if (CurrentNode.Kind == StageKind.Battle)
+            var reward = 0;
+            var rewardedEnemyCount = Math.Max(0, defeatedEnemyCount);
+            for (var index = 0; index < rewardedEnemyCount; index++)
             {
-                Player.Gold += 10;
+                reward += Random.Next(10, 16);
             }
+
+            if (CurrentNode.Kind == StageKind.Boss)
+            {
+                reward += Random.Next(100, 151);
+            }
+
+            LastBattleGoldReward = reward;
+            Player.Gold += reward;
+            CurrentNode.Cleared = true;
+            return reward;
         }
 
         public void AdvanceToNextLayer()
@@ -131,6 +277,31 @@ namespace LostPage
         public IReadOnlyList<CarryToolKind> CreateBossToolChoices()
         {
             return CreateToolChoices(CarryToolRarity.Boss, 3);
+        }
+
+        public IReadOnlyList<CarryToolKind> CreateToolStageChoices()
+        {
+            if (CurrentNode.Kind != StageKind.Tool ||
+                CurrentNode.Cleared)
+            {
+                throw new InvalidOperationException(
+                    "現在地では道具を選択できません。");
+            }
+
+            return CreateToolChoices(CarryToolRarity.Normal, 3);
+        }
+
+        public void ClaimCurrentToolStageReward(CarryToolKind kind)
+        {
+            if (CurrentNode.Kind != StageKind.Tool ||
+                CurrentNode.Cleared)
+            {
+                throw new InvalidOperationException(
+                    "現在地では道具を受け取れません。");
+            }
+
+            ClaimTool(kind, CarryToolRarity.Normal);
+            CurrentNode.Cleared = true;
         }
 
         public void ClaimTool(
@@ -221,14 +392,14 @@ namespace LostPage
 
         public bool TryBuyCard(CardKind kind)
         {
-            const int price = 20;
-            if (Player.Gold < price)
+            if (Player.Gold < ShopCardPrice)
             {
                 return false;
             }
 
-            Player.Gold -= price;
+            Player.Gold -= ShopCardPrice;
             Player.AddCard(kind);
+            ShopCardPrice += ShopCardPriceIncrease;
             return true;
         }
 
@@ -247,59 +418,43 @@ namespace LostPage
                 .ToList();
         }
 
-        private static IEnumerable<MapNode> CreateMap(int layer)
+        private IEnumerable<MapNode> CreateMap(int layer)
         {
-            const float leftX = 540f;
-            const float rightX = 1060f;
             const float startY = 100f;
             const float rowSpacing = 230f;
+            const float columnSpacing = 270f;
+            const float horizontalMargin = 350f;
 
             var rowCount = 4 + (layer - 1);
-            var bossId = rowCount * 2 + 1;
+            var intermediateNodeCount = rowCount * (rowCount + 1) / 2;
+            var bossId = intermediateNodeCount + 1;
+            var contentWidth =
+                (rowCount - 1) * columnSpacing + horizontalMargin * 2f;
+            var centerX = contentWidth * 0.5f;
+
             yield return new MapNode(
                 0,
                 $"{layer}層開始地点",
                 StageKind.Start,
-                800f,
+                centerX,
                 startY,
-                1,
-                2);
+                GetRowStartId(0));
 
-            var utilityRow = rowCount / 2;
-            var specialRow = utilityRow - 1;
+            var stageKinds = CreateIntermediateStageKinds(
+                layer,
+                intermediateNodeCount);
             var battleNumber = 0;
             for (var row = 0; row < rowCount; row++)
             {
-                for (var column = 0; column < 2; column++)
+                var rowWidth = row + 1;
+                var rowStartId = GetRowStartId(row);
+                for (var column = 0; column < rowWidth; column++)
                 {
-                    var id = 1 + row * 2 + column;
-                    StageKind kind;
-                    string name;
-                    if (row == utilityRow && column == 0)
+                    var id = rowStartId + column;
+                    var kind = stageKinds[id - 1];
+                    if (kind == StageKind.Battle)
                     {
-                        kind = StageKind.Fountain;
-                        name = "回復の泉";
-                    }
-                    else if (row == utilityRow && column == 1)
-                    {
-                        kind = StageKind.Shop;
-                        name = "商人";
-                    }
-                    else if (row == specialRow && column == 0)
-                    {
-                        kind = StageKind.RandomEvent;
-                        name = "何もない場所";
-                    }
-                    else if (row == specialRow && column == 1)
-                    {
-                        kind = StageKind.Reward;
-                        name = "報酬の間";
-                    }
-                    else
-                    {
-                        kind = StageKind.Battle;
                         battleNumber++;
-                        name = $"第{battleNumber}戦闘";
                     }
 
                     var neighbors = new List<int>();
@@ -309,8 +464,16 @@ namespace LostPage
                     }
                     else
                     {
-                        neighbors.Add(1 + (row - 1) * 2);
-                        neighbors.Add(2 + (row - 1) * 2);
+                        var previousRowStart = GetRowStartId(row - 1);
+                        if (column > 0)
+                        {
+                            neighbors.Add(previousRowStart + column - 1);
+                        }
+
+                        if (column < row)
+                        {
+                            neighbors.Add(previousRowStart + column);
+                        }
                     }
 
                     if (row == rowCount - 1)
@@ -319,28 +482,89 @@ namespace LostPage
                     }
                     else
                     {
-                        neighbors.Add(1 + (row + 1) * 2);
-                        neighbors.Add(2 + (row + 1) * 2);
+                        var nextRowStart = GetRowStartId(row + 1);
+                        neighbors.Add(nextRowStart + column);
+                        neighbors.Add(nextRowStart + column + 1);
                     }
 
+                    var x =
+                        centerX +
+                        (column - (rowWidth - 1) * 0.5f) *
+                        columnSpacing;
                     yield return new MapNode(
                         id,
-                        name,
+                        GetStageName(kind, battleNumber),
                         kind,
-                        column == 0 ? leftX : rightX,
+                        x,
                         startY + (row + 1) * rowSpacing,
-                        neighbors.ToArray());
+                        neighbors.Distinct().ToArray());
                 }
             }
 
+            var finalRowStartId = GetRowStartId(rowCount - 1);
             yield return new MapNode(
                 bossId,
                 $"{layer}層ボス",
                 StageKind.Boss,
-                800f,
+                centerX,
                 startY + (rowCount + 1) * rowSpacing,
-                bossId - 2,
-                bossId - 1);
+                Enumerable.Range(finalRowStartId, rowCount).ToArray());
+        }
+
+        private List<StageKind> CreateIntermediateStageKinds(
+            int layer,
+            int nodeCount)
+        {
+            var kinds = new List<StageKind>
+            {
+                StageKind.Fountain,
+                StageKind.Shop,
+                StageKind.Reward,
+                StageKind.Tool
+            };
+            var eventCount = Random.Next(
+                MinimumRandomEventCountByLayer[layer - 1],
+                MaximumRandomEventCountByLayer[layer - 1] + 1);
+            for (var index = 0; index < eventCount; index++)
+            {
+                kinds.Add(StageKind.RandomEvent);
+            }
+
+            while (kinds.Count < nodeCount)
+            {
+                kinds.Add(StageKind.Battle);
+            }
+
+            return kinds.OrderBy(_ => Random.Next()).ToList();
+        }
+
+        private static int GetRowStartId(int row)
+        {
+            return 1 + row * (row + 1) / 2;
+        }
+
+        private static string GetStageName(StageKind kind, int battleNumber)
+        {
+            switch (kind)
+            {
+                case StageKind.Battle:
+                    return $"第{battleNumber}戦闘";
+                case StageKind.Fountain:
+                    return "回復の泉";
+                case StageKind.Shop:
+                    return "商人";
+                case StageKind.RandomEvent:
+                    return "何もない場所";
+                case StageKind.Reward:
+                    return "報酬の間";
+                case StageKind.Tool:
+                    return "道具の間";
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(kind),
+                        kind,
+                        null);
+            }
         }
 
         private IEnumerable<EnemyState> CreateEnemies()
@@ -349,10 +573,10 @@ namespace LostPage
             {
                 return new[]
                 {
-                    CreateScaledEnemy(
+                    new EnemyState(
                         "ロストページの主",
-                        80,
-                        12,
+                        BossHpByLayer[CurrentLayer - 1],
+                        12 + (CurrentLayer - 1) / 2,
                         10,
                         EnemyActionKind.Attack,
                         EnemyActionKind.Defense,
@@ -361,102 +585,29 @@ namespace LostPage
                 };
             }
 
-            var battleNodes = _nodes.Values
-                .Where(node => node.Kind == StageKind.Battle)
-                .OrderBy(node => node.Y)
-                .ThenBy(node => node.Id)
+            var enemyCount = Random.Next(
+                MinimumEnemyCountByLayer[CurrentLayer - 1],
+                MaximumEnemyCountByLayer[CurrentLayer - 1] + 1);
+            return EnemyTemplates
+                .OrderBy(_ => Random.Next())
+                .Take(enemyCount)
+                .Select(CreateScaledEnemy)
                 .ToList();
-            var encounterIndex = battleNodes.FindIndex(
-                node => node.Id == CurrentNodeId);
-            switch (encounterIndex % 4)
-            {
-                case 0:
-                    return new[]
-                    {
-                        CreateScaledEnemy(
-                            "紙喰らい",
-                            30,
-                            7,
-                            6,
-                            EnemyActionKind.Attack,
-                            EnemyActionKind.Defense,
-                            EnemyActionKind.Weaken)
-                    };
-                case 1:
-                    return new[]
-                    {
-                        CreateScaledEnemy(
-                            "墨の影A",
-                            30,
-                            6,
-                            5,
-                            EnemyActionKind.Attack,
-                            EnemyActionKind.Weaken,
-                            EnemyActionKind.Defense),
-                        CreateScaledEnemy(
-                            "墨の影B",
-                            30,
-                            6,
-                            5,
-                            EnemyActionKind.Defense,
-                            EnemyActionKind.Attack,
-                            EnemyActionKind.Weaken)
-                    };
-                case 2:
-                    return new[]
-                    {
-                        CreateScaledEnemy(
-                            "失稿の番人",
-                            50,
-                            9,
-                            8,
-                            EnemyActionKind.Weaken,
-                            EnemyActionKind.Attack,
-                            EnemyActionKind.Defense,
-                            EnemyActionKind.Attack)
-                    };
-                case 3:
-                    return new[]
-                    {
-                        CreateScaledEnemy(
-                            "綴じ糸の獣",
-                            45,
-                            8,
-                            7,
-                            EnemyActionKind.Attack,
-                            EnemyActionKind.Attack,
-                            EnemyActionKind.Defense),
-                        CreateScaledEnemy(
-                            "破れた騎士",
-                            55,
-                            9,
-                            8,
-                            EnemyActionKind.Defense,
-                            EnemyActionKind.Weaken,
-                            EnemyActionKind.Attack)
-                    };
-                default:
-                    throw new InvalidOperationException(
-                        "戦闘ステージの編成を決定できません。");
-            }
         }
 
-        private EnemyState CreateScaledEnemy(
-            string name,
-            int baseHp,
-            int baseAttack,
-            int defense,
-            params EnemyActionKind[] pattern)
+        private EnemyState CreateScaledEnemy(EnemyTemplate template)
         {
-            var hpPercent = 100 + (CurrentLayer - 1) * 20;
-            var maxHp = (baseHp * hpPercent + 99) / 100;
+            var hpPercent = NormalHpPercentByLayer[CurrentLayer - 1];
+            var maxHp = Math.Min(
+                400,
+                (template.BaseHp * hpPercent + 99) / 100);
             var attackBonus = (CurrentLayer - 1) / 2;
             return new EnemyState(
-                name,
+                template.Name,
                 maxHp,
-                baseAttack + attackBonus,
-                defense,
-                pattern);
+                template.BaseAttack + attackBonus,
+                template.Defense,
+                template.Pattern);
         }
     }
 }
