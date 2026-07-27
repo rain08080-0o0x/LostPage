@@ -4,12 +4,40 @@ using System.Linq;
 
 namespace LostPage
 {
+    public sealed class AttackHitResult
+    {
+        public AttackHitResult(
+            int targetIndex,
+            int hpBefore,
+            int hpAfter,
+            int shieldBefore,
+            int shieldAfter,
+            bool pierced)
+        {
+            TargetIndex = targetIndex;
+            HpBefore = hpBefore;
+            HpAfter = hpAfter;
+            ShieldBefore = shieldBefore;
+            ShieldAfter = shieldAfter;
+            Pierced = pierced;
+        }
+
+        public int TargetIndex { get; }
+        public int HpBefore { get; }
+        public int HpAfter { get; }
+        public int ShieldBefore { get; }
+        public int ShieldAfter { get; }
+        public bool Pierced { get; }
+    }
+
     public sealed class BattleModel
     {
         private readonly PlayerState _player;
         private readonly Random _random;
         private readonly List<int> _lastAttackTargetIndices =
             new List<int>();
+        private readonly List<AttackHitResult> _lastAttackHits =
+            new List<AttackHitResult>();
 
         public BattleModel(
             PlayerState player,
@@ -63,6 +91,28 @@ namespace LostPage
         public PlayerState Player => _player;
         public IReadOnlyList<int> LastAttackTargetIndices =>
             _lastAttackTargetIndices;
+        public IReadOnlyList<AttackHitResult> LastAttackHits =>
+            _lastAttackHits;
+        public IReadOnlyList<EtherType> LastDrawnEtherTypes
+        {
+            get;
+            private set;
+        } = Array.Empty<EtherType>();
+        public IReadOnlyDictionary<EtherType, int> LastUnusedAfterDraw
+        {
+            get;
+            private set;
+        } = new Dictionary<EtherType, int>();
+        public IReadOnlyDictionary<EtherType, int> LastCurrentAfterDraw
+        {
+            get;
+            private set;
+        } = new Dictionary<EtherType, int>();
+        public IReadOnlyDictionary<EtherType, int> LastSpentAfterDraw
+        {
+            get;
+            private set;
+        } = new Dictionary<EtherType, int>();
 
         public bool HasUsableCard =>
             Phase == BattlePhase.PlayerTurn && _player.Deck.Any(CanUse);
@@ -186,6 +236,7 @@ namespace LostPage
             var cost = CardCatalog.GetCost(card.Kind);
             var guardCycleStacksBeforeUse = GuardCycleStacks;
             _lastAttackTargetIndices.Clear();
+            _lastAttackHits.Clear();
             Pool.Pay(cost);
 
             string message;
@@ -305,16 +356,8 @@ namespace LostPage
             var damage = PreviewValue(card);
             ConsumeOneShotModifiers();
             var target = Enemies[targetIndex];
-            _lastAttackTargetIndices.Add(targetIndex);
             var pierced = ConsumePenetration();
-            if (pierced)
-            {
-                target.ReceiveDamageIgnoringShield(damage);
-            }
-            else
-            {
-                target.ReceiveDamage(damage);
-            }
+            ApplyAttackHit(targetIndex, damage, pierced);
 
             var bonusMessage = RegisterAttackCardUse();
             UpdateVictoryState();
@@ -339,15 +382,7 @@ namespace LostPage
                     continue;
                 }
 
-                _lastAttackTargetIndices.Add(index);
-                if (pierced)
-                {
-                    enemy.ReceiveDamageIgnoringShield(damage);
-                }
-                else
-                {
-                    enemy.ReceiveDamage(damage);
-                }
+                ApplyAttackHit(index, damage, pierced);
             }
 
             var bonusMessage = RegisterAttackCardUse();
@@ -378,16 +413,8 @@ namespace LostPage
                 var targetIndex =
                     targetIndices[_random.Next(targetIndices.Count)];
                 var target = Enemies[targetIndex];
-                _lastAttackTargetIndices.Add(targetIndex);
                 var pierced = ConsumePenetration();
-                if (pierced)
-                {
-                    target.ReceiveDamageIgnoringShield(damage);
-                }
-                else
-                {
-                    target.ReceiveDamage(damage);
-                }
+                ApplyAttackHit(targetIndex, damage, pierced);
 
                 hits.Add(
                     $"{target.Name}へ{damage}" +
@@ -397,6 +424,34 @@ namespace LostPage
             var bonusMessage = RegisterAttackCardUse();
             UpdateVictoryState();
             return $"乱撃：{string.Join("、", hits)}。{bonusMessage}".Trim();
+        }
+
+        private void ApplyAttackHit(
+            int targetIndex,
+            int damage,
+            bool pierced)
+        {
+            var target = Enemies[targetIndex];
+            var hpBefore = target.Hp;
+            var shieldBefore = target.Shield;
+            _lastAttackTargetIndices.Add(targetIndex);
+            if (pierced)
+            {
+                target.ReceiveDamageIgnoringShield(damage);
+            }
+            else
+            {
+                target.ReceiveDamage(damage);
+            }
+
+            _lastAttackHits.Add(
+                new AttackHitResult(
+                    targetIndex,
+                    hpBefore,
+                    target.Hp,
+                    shieldBefore,
+                    target.Shield,
+                    pierced));
         }
 
         private string RegisterAttackCardUse()
@@ -666,8 +721,18 @@ namespace LostPage
                 }
             }
 
-            Pool.Draw(_player.GetEtherDrawCount());
+            var drawn = Pool.Draw(_player.GetEtherDrawCount());
+            LastDrawnEtherTypes = drawn;
+            LastUnusedAfterDraw = CopyPool(Pool.Unused);
+            LastCurrentAfterDraw = CopyPool(Pool.Current);
+            LastSpentAfterDraw = CopyPool(Pool.Spent);
             return string.Join("\n", messages);
+        }
+
+        private static IReadOnlyDictionary<EtherType, int> CopyPool(
+            IReadOnlyDictionary<EtherType, int> source)
+        {
+            return source.ToDictionary(pair => pair.Key, pair => pair.Value);
         }
 
         private List<string> ExecuteEnemyTurn()

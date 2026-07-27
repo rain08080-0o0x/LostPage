@@ -41,7 +41,7 @@ namespace LostPage.Editor
 
             PlayerSettings.companyName = "LostPagePrototype";
             PlayerSettings.productName = "Lost Page";
-            PlayerSettings.bundleVersion = "1.1.2";
+            PlayerSettings.bundleVersion = "1.1.3";
             PlayerSettings.defaultScreenWidth = 1920;
             PlayerSettings.defaultScreenHeight = 1080;
             PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
@@ -56,7 +56,7 @@ namespace LostPage.Editor
                 "com.lostpage.prototype");
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
             PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevelAuto;
-            PlayerSettings.Android.bundleVersionCode = 2;
+            PlayerSettings.Android.bundleVersionCode = 3;
 
             AssetDatabase.SaveAssets();
             Debug.Log("LOSTPAGE_SETUP_OK");
@@ -313,6 +313,18 @@ namespace LostPage.Editor
                 new[] { target },
                 new System.Random(2));
             Require(
+                attackBattle.LastDrawnEtherTypes.Count ==
+                    attackPlayer.GetEtherDrawCount() &&
+                attackBattle.LastCurrentAfterDraw.Values.Sum() ==
+                    attackBattle.LastDrawnEtherTypes.Count &&
+                attackBattle.LastUnusedAfterDraw.Values.Sum() +
+                    attackBattle.LastCurrentAfterDraw.Values.Sum() +
+                    attackBattle.LastSpentAfterDraw.Values.Sum() ==
+                    attackBattle.Pool.Unused.Values.Sum() +
+                    attackBattle.Pool.Current.Values.Sum() +
+                    attackBattle.Pool.Spent.Values.Sum(),
+                "ターン開始時の配布エーテル列とプール記録");
+            Require(
                 attackBattle.CanUse(attackPlayer.Deck[0]),
                 "攻撃カード使用条件");
             attackBattle.UseCard(attackPlayer.Deck[0], 0);
@@ -321,6 +333,12 @@ namespace LostPage.Editor
                 attackBattle.LastAttackTargetIndices.SequenceEqual(
                     new[] { 0 }),
                 "攻撃カードの5ダメージと演出対象");
+            Require(
+                attackBattle.LastAttackHits.Count == 1 &&
+                attackBattle.LastAttackHits[0].TargetIndex == 0 &&
+                attackBattle.LastAttackHits[0].HpBefore == 30 &&
+                attackBattle.LastAttackHits[0].HpAfter == 25,
+                "単体攻撃のヒット単位HP記録");
             Require(
                 attackPlayer.Deck[0].CooldownRemaining == 1 &&
                 !attackBattle.CanUse(attackPlayer.Deck[0]),
@@ -394,6 +412,11 @@ namespace LostPage.Editor
                 areaBattle.LastAttackTargetIndices.SequenceEqual(
                     new[] { 0, 1 }),
                 "薙ぎ払いの全体9ダメージと同時演出対象");
+            Require(
+                areaBattle.LastAttackHits.Count == 2 &&
+                areaBattle.LastAttackHits.All(
+                    hit => hit.HpBefore == 30 && hit.HpAfter == 21),
+                "全体攻撃の対象別HP記録");
 
             var strongDefensePlayer = new PlayerState();
             strongDefensePlayer.Deck.Clear();
@@ -647,6 +670,14 @@ namespace LostPage.Editor
                 barrageBattle.LastAttackTargetIndices.All(
                     index => index == 0),
                 "乱撃の10ダメージ4回と連続演出対象");
+            Require(
+                barrageBattle.LastAttackHits
+                    .Select(hit => hit.HpBefore)
+                    .SequenceEqual(new[] { 100, 90, 80, 70 }) &&
+                barrageBattle.LastAttackHits
+                    .Select(hit => hit.HpAfter)
+                    .SequenceEqual(new[] { 90, 80, 70, 60 }),
+                "乱撃のヒットごとのHP推移記録");
 
             var barragePiercePlayer = new PlayerState();
             barragePiercePlayer.Deck.Clear();
@@ -1281,6 +1312,70 @@ namespace LostPage.Editor
                 !session.CanTravelTo(firstLayerBossId),
                 "未接続ボスへの移動禁止");
 
+            var fogSession = new RunSession(54321);
+            var fogStart = fogSession.CurrentNode;
+            var fogFirstRow = fogSession.Nodes.Single(node => node.Id == 1);
+            Require(
+                fogSession.FogDepth == RunSession.InitialFogDepth &&
+                fogSession.MapMoveCount == 0 &&
+                fogSession.CurrentFogDamage == 5 &&
+                fogStart.Depth == 0 &&
+                fogFirstRow.Depth == 1,
+                "霧の初期深度・移動回数・マス深度");
+            var invalidFogTravelRejected = false;
+            try
+            {
+                fogSession.TravelTo(
+                    fogSession.Nodes.Single(
+                        node => node.Kind == StageKind.Boss).Id);
+            }
+            catch (InvalidOperationException)
+            {
+                invalidFogTravelRejected = true;
+            }
+
+            Require(
+                invalidFogTravelRejected &&
+                fogSession.FogDepth == RunSession.InitialFogDepth &&
+                fogSession.MapMoveCount == 0,
+                "不正な移動では霧が進行しない");
+            var directFogSession = new RunSession(54322);
+            MoveToBoss(directFogSession);
+            Require(
+                directFogSession.CurrentNode.Kind == StageKind.Boss &&
+                directFogSession.Player.Hp == 100 &&
+                directFogSession.LastTravelFogDamage == 0,
+                "最短経路で前進した場合は霧ダメージなし");
+            fogSession.Player.Shield = 23;
+            for (var move = 0; move < 5; move++)
+            {
+                fogSession.TravelTo(
+                    fogSession.CurrentNodeId == 0 ? 1 : 0);
+            }
+
+            Require(
+                fogSession.MapMoveCount == 5 &&
+                fogSession.FogDepth == 0 &&
+                fogSession.Player.Hp == 100 &&
+                fogSession.Player.Shield == 23 &&
+                fogSession.IsNodeInFog(fogStart) &&
+                !fogSession.IsNodeInFog(fogFirstRow),
+                "5移動で霧が開始地点へ到達");
+            fogSession.TravelTo(0);
+            Require(
+                fogSession.MapMoveCount == 6 &&
+                fogSession.FogDepth == 1 &&
+                fogSession.LastTravelFogDamage == 5 &&
+                fogSession.Player.Hp == 95 &&
+                fogSession.Player.Shield == 23,
+                "6移動目の開始地点再進入・シールド無視霧ダメージ");
+            fogSession.Player.Hp = 5;
+            fogSession.TravelTo(1);
+            Require(
+                fogSession.Player.Hp == 0 &&
+                fogSession.LastTravelFogDamage == 5,
+                "霧ダメージによるHP0");
+
             var layeredSession = new RunSession(24680);
             layeredSession.Player.Hp = 73;
             layeredSession.Player.Gold = 25;
@@ -1297,6 +1392,7 @@ namespace LostPage.Editor
                 new[] { 2, 4, 7, 11, 15 };
             var maximumRandomEventsByLayer =
                 new[] { 3, 5, 9, 13, 17 };
+            var fogDamageByLayer = new[] { 5, 7, 9, 11, 13 };
             for (var layer = 1; layer <= RunSession.MaxLayer; layer++)
             {
                 var rowCount = layer + 3;
@@ -1309,6 +1405,15 @@ namespace LostPage.Editor
                 Require(
                     layeredSession.CurrentLayer == layer,
                     $"{layer}層の層番号");
+                Require(
+                    layeredSession.CurrentFogDamage ==
+                        fogDamageByLayer[layer - 1] &&
+                    layeredSession.Nodes.Single(
+                        node => node.Kind == StageKind.Start).Depth == 0 &&
+                    layeredSession.Nodes.Single(
+                        node => node.Kind == StageKind.Boss).Depth ==
+                        rowCount + 1,
+                    $"{layer}層の霧ダメージ・開始・ボス深度");
                 Require(
                     layeredSession.Nodes.Count ==
                     intermediateNodeCount + 2,
@@ -1409,7 +1514,11 @@ namespace LostPage.Editor
                     layeredSession.AdvanceToNextLayer();
                     Require(
                         layeredSession.CurrentNodeId == 0 &&
-                        layeredSession.CurrentNode.Kind == StageKind.Start,
+                        layeredSession.CurrentNode.Kind == StageKind.Start &&
+                        layeredSession.MapMoveCount == 0 &&
+                        layeredSession.FogDepth ==
+                            RunSession.InitialFogDepth &&
+                        layeredSession.LastTravelFogDamage == 0,
                         $"{layer + 1}層の開始地点");
                     Require(
                         layeredSession.Player.Hp == expectedMaxHp &&
@@ -1649,6 +1758,24 @@ namespace LostPage.Editor
                 options = BuildOptions.None
             };
             EnsureBuildSucceeded(BuildPipeline.BuildPlayer(options), "Windows");
+        }
+
+        public static void BuildWindowsValidation()
+        {
+            EditorUserBuildSettings.SwitchActiveBuildTarget(
+                BuildTargetGroup.Standalone,
+                BuildTarget.StandaloneWindows64);
+            Directory.CreateDirectory("Builds/FogValidation");
+            var options = new BuildPlayerOptions
+            {
+                scenes = new[] { MainScenePath },
+                locationPathName = "Builds/FogValidation/LostPage.exe",
+                target = BuildTarget.StandaloneWindows64,
+                options = BuildOptions.Development
+            };
+            EnsureBuildSucceeded(
+                BuildPipeline.BuildPlayer(options),
+                "WindowsValidation");
         }
 
         [MenuItem("Lost Page/Build Android")]

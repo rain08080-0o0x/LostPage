@@ -23,6 +23,10 @@ namespace LostPage
         public const int MaxLayer = 5;
         public const int InitialShopCardPrice = 20;
         public const int ShopCardPriceIncrease = 5;
+        public const int InitialFogDepth = -5;
+
+        private const float MapStartY = 100f;
+        private const float MapRowSpacing = 230f;
 
         private static readonly int[] BossHpByLayer =
         {
@@ -165,6 +169,7 @@ namespace LostPage
             CurrentNodeId = 0;
             _nodes[0].Visited = true;
             _nodes[0].Cleared = true;
+            FogDepth = InitialFogDepth;
         }
 
         public PlayerState Player { get; }
@@ -173,11 +178,22 @@ namespace LostPage
         public int CurrentNodeId { get; private set; }
         public int ShopCardPrice { get; private set; } = InitialShopCardPrice;
         public int LastBattleGoldReward { get; private set; }
+        public int MapMoveCount { get; private set; }
+        public int FogDepth { get; private set; }
+        public int LastTravelFogDamage { get; private set; }
         public IReadOnlyCollection<MapNode> Nodes => _nodes.Values;
         public MapNode CurrentNode => _nodes[CurrentNodeId];
         public bool HasNextLayer => CurrentLayer < MaxLayer;
         public float MapContentWidth => _nodes.Values.Max(node => node.X) + 300f;
         public float MapContentHeight => _nodes.Values.Max(node => node.Y) + 200f;
+        public int CurrentFogDamage => 5 + (CurrentLayer - 1) * 2;
+        public float FogBoundaryY =>
+            MapStartY + FogDepth * MapRowSpacing;
+
+        public bool IsNodeInFog(MapNode node)
+        {
+            return node.Depth <= FogDepth;
+        }
 
         public bool CanTravelTo(int nodeId)
         {
@@ -192,8 +208,13 @@ namespace LostPage
                 throw new InvalidOperationException("接続されていないステージへは移動できません。");
             }
 
-            CurrentNodeId = nodeId;
             var firstVisit = !_nodes[nodeId].Visited;
+            MapMoveCount++;
+            FogDepth++;
+            CurrentNodeId = nodeId;
+            LastTravelFogDamage = IsNodeInFog(CurrentNode)
+                ? Player.LoseHp(CurrentFogDamage)
+                : 0;
             _nodes[nodeId].Visited = true;
             return firstVisit;
         }
@@ -257,6 +278,9 @@ namespace LostPage
             CurrentNodeId = 0;
             _nodes[0].Visited = true;
             _nodes[0].Cleared = true;
+            MapMoveCount = 0;
+            FogDepth = InitialFogDepth;
+            LastTravelFogDamage = 0;
         }
 
         public IReadOnlyList<CardKind> CreateCardRewardChoices()
@@ -420,8 +444,6 @@ namespace LostPage
 
         private IEnumerable<MapNode> CreateMap(int layer)
         {
-            const float startY = 100f;
-            const float rowSpacing = 230f;
             const float columnSpacing = 270f;
             const float horizontalMargin = 350f;
 
@@ -436,8 +458,9 @@ namespace LostPage
                 0,
                 $"{layer}層開始地点",
                 StageKind.Start,
+                0,
                 centerX,
-                startY,
+                MapStartY,
                 GetRowStartId(0));
 
             var stageKinds = CreateIntermediateStageKinds(
@@ -495,8 +518,9 @@ namespace LostPage
                         id,
                         GetStageName(kind, battleNumber),
                         kind,
+                        row + 1,
                         x,
-                        startY + (row + 1) * rowSpacing,
+                        MapStartY + (row + 1) * MapRowSpacing,
                         neighbors.Distinct().ToArray());
                 }
             }
@@ -506,8 +530,9 @@ namespace LostPage
                 bossId,
                 $"{layer}層ボス",
                 StageKind.Boss,
+                rowCount + 1,
                 centerX,
-                startY + (rowCount + 1) * rowSpacing,
+                MapStartY + (rowCount + 1) * MapRowSpacing,
                 Enumerable.Range(finalRowStartId, rowCount).ToArray());
         }
 

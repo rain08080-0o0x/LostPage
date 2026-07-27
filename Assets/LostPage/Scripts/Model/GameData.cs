@@ -709,6 +709,7 @@ namespace LostPage
             int id,
             string name,
             StageKind kind,
+            int depth,
             float x,
             float y,
             params int[] neighbors)
@@ -716,6 +717,7 @@ namespace LostPage
             Id = id;
             Name = name;
             Kind = kind;
+            Depth = depth;
             X = x;
             Y = y;
             Neighbors = neighbors ?? Array.Empty<int>();
@@ -724,6 +726,7 @@ namespace LostPage
         public int Id { get; }
         public string Name { get; }
         public StageKind Kind { get; }
+        public int Depth { get; }
         public float X { get; }
         public float Y { get; }
         public int[] Neighbors { get; }

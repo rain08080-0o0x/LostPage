@@ -26,13 +26,23 @@ namespace LostPage
             Acquired
         }
 
+        private sealed class EtherTransferVisual
+        {
+            public EtherType Type;
+            public RectTransform Rect;
+            public Vector3 Start;
+            public Vector3 Control;
+            public Vector3 End;
+            public float Elapsed;
+        }
+
         private static readonly string[] TutorialPageTitles =
         {
             "戦闘画面とエーテル",
             "攻撃と敵の選択",
             "自分に使うカード",
             "ターン終了と持ち越し",
-            "マップとデッキ強化"
+            "マップ・霧とデッキ強化"
         };
 
         private static readonly string[] TutorialPageDescriptions =
@@ -41,7 +51,7 @@ namespace LostPage
             "攻撃カードは対象の敵へドラッグします。敵を選んで使用ボタンを押しても使えます。",
             "防御・チャージ・持続カードは、中央のカード説明欄へドラッグして発動します。",
             "ターンは自動では終わりません。終了時に残ったエーテルを基本2個、鞄があればさらに持ち越せます。",
-            "分岐を選んで進み、訪問済みの道は戻れます。戦闘報酬やショップでデッキを強化します。"
+            "分岐を選んで進みます。移動ごとに下から霧が1行迫り、霧の中へ入るとHPが減ります。"
         };
 
         private Canvas _canvas;
@@ -65,6 +75,33 @@ namespace LostPage
         private CardSortMode _cardSortMode = CardSortMode.UsableFirst;
         private readonly List<RectTransform> _enemyRects =
             new List<RectTransform>();
+        private readonly List<Text> _enemyLabels = new List<Text>();
+        private readonly List<RectTransform> _enemyHpBarFills =
+            new List<RectTransform>();
+        private readonly Dictionary<EtherType, RectTransform>
+            _unusedEtherAnchors =
+                new Dictionary<EtherType, RectTransform>();
+        private readonly Dictionary<EtherType, RectTransform>
+            _currentEtherAnchors =
+                new Dictionary<EtherType, RectTransform>();
+        private readonly Dictionary<EtherType, RectTransform>
+            _spentEtherAnchors =
+                new Dictionary<EtherType, RectTransform>();
+        private readonly Dictionary<EtherType, Text> _unusedEtherCountTexts =
+            new Dictionary<EtherType, Text>();
+        private readonly Dictionary<EtherType, Text> _currentEtherCountTexts =
+            new Dictionary<EtherType, Text>();
+        private readonly Dictionary<EtherType, Text> _spentEtherCountTexts =
+            new Dictionary<EtherType, Text>();
+        private readonly Dictionary<EtherType, int> _visibleUnusedEther =
+            new Dictionary<EtherType, int>();
+        private readonly Dictionary<EtherType, int> _visibleCurrentEther =
+            new Dictionary<EtherType, int>();
+        private readonly Dictionary<EtherType, int> _visibleSpentEther =
+            new Dictionary<EtherType, int>();
+        private Text _unusedEtherTitle;
+        private Text _currentEtherHeader;
+        private Text _spentEtherTitle;
         private bool _isResolvingAction;
 
         private void Awake()
@@ -201,7 +238,7 @@ namespace LostPage
                 $"HP {_session.Player.Hp}/{_session.Player.MaxHp}　" +
                 $"所持金 {_session.Player.Gold}G　" +
                 $"カード {_session.Player.Deck.Count}枚\n" +
-                GetOwnedToolSummary(),
+                $"{GetFogStatusText()}　{GetOwnedToolSummary()}",
                 22,
                 TextAnchor.MiddleRight);
 
@@ -221,6 +258,7 @@ namespace LostPage
                 _session.MapContentHeight);
 
             DrawMapEdges(content);
+            DrawFog(content);
             DrawMapNodes(content);
 
             scroll.normalizedPosition = new Vector2(_mapScrollX, _mapScrollY);
@@ -295,6 +333,56 @@ namespace LostPage
             }
         }
 
+        private void DrawFog(RectTransform content)
+        {
+            var boundaryY = Mathf.Clamp(
+                _session.FogBoundaryY,
+                0f,
+                content.sizeDelta.y);
+            if (boundaryY <= 0f)
+            {
+                return;
+            }
+
+            var fogArea = UiFactory.CreatePanel(
+                "FogArea",
+                content,
+                Vector2.zero,
+                Vector2.zero,
+                new Color32(55, 70, 79, 150));
+            fogArea.pivot = Vector2.zero;
+            fogArea.anchoredPosition = Vector2.zero;
+            fogArea.sizeDelta =
+                new Vector2(content.sizeDelta.x, boundaryY);
+            fogArea.GetComponent<Image>().raycastTarget = false;
+
+            var border = UiFactory.CreatePanel(
+                "FogBorder",
+                content,
+                Vector2.zero,
+                Vector2.zero,
+                new Color32(181, 205, 211, 235));
+            border.pivot = new Vector2(0f, 0.5f);
+            border.anchoredPosition = new Vector2(0f, boundaryY);
+            border.sizeDelta = new Vector2(content.sizeDelta.x, 14f);
+            border.GetComponent<Image>().raycastTarget = false;
+
+            var label = UiFactory.CreateText(
+                "FogBorderLabel",
+                content,
+                Vector2.zero,
+                Vector2.zero,
+                $"霧の境界　進入時 {_session.CurrentFogDamage}ダメージ",
+                22,
+                TextAnchor.MiddleCenter,
+                new Color32(220, 231, 234, 255));
+            label.rectTransform.pivot = new Vector2(0f, 0f);
+            label.rectTransform.anchoredPosition =
+                new Vector2(20f, boundaryY + 12f);
+            label.rectTransform.sizeDelta = new Vector2(430f, 44f);
+            label.raycastTarget = false;
+        }
+
         private void DrawMapNodes(RectTransform content)
         {
             foreach (var node in _session.Nodes.OrderBy(node => node.Id))
@@ -337,6 +425,30 @@ namespace LostPage
         private void OnMapNodePressed(int nodeId)
         {
             var firstVisit = _session.TravelTo(nodeId);
+            var fogDamage = _session.LastTravelFogDamage;
+            if (fogDamage <= 0)
+            {
+                ResolveMapArrival(firstVisit);
+                return;
+            }
+
+            _message =
+                $"霧の中へ入り、HPが{fogDamage}減少しました。" +
+                $"（HP {_session.Player.Hp}/{_session.Player.MaxHp}）";
+            if (_session.Player.Hp <= 0)
+            {
+                ShowDefeat(
+                    $"霧の中で{fogDamage}ダメージを受け、" +
+                    "プレイヤーのHPが0になった");
+                return;
+            }
+
+            ShowMap();
+            StartCoroutine(ShakeThenShowFogDamage(firstVisit, fogDamage));
+        }
+
+        private void ResolveMapArrival(bool firstVisit)
+        {
             var node = _session.CurrentNode;
             _message = firstVisit
                 ? $"{node.Name}へ移動しました。"
@@ -383,6 +495,43 @@ namespace LostPage
             }
         }
 
+        private IEnumerator ShakeThenShowFogDamage(
+            bool firstVisit,
+            int fogDamage)
+        {
+            var blocker = CreateOverlay("FogDamageBlocker");
+            blocker.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
+            var originalPosition = _screenRoot.anchoredPosition;
+            const float duration = 0.25f;
+            const float amplitude = 18f;
+            var elapsed = 0f;
+            while (elapsed < duration)
+            {
+                elapsed += Time.unscaledDeltaTime;
+                var strength = 1f - Mathf.Clamp01(elapsed / duration);
+                _screenRoot.anchoredPosition =
+                    originalPosition +
+                    new Vector2(
+                        Mathf.Sin(elapsed * 91f),
+                        Mathf.Cos(elapsed * 73f)) *
+                    amplitude *
+                    strength;
+                yield return null;
+            }
+
+            _screenRoot.anchoredPosition = originalPosition;
+            if (blocker != null)
+            {
+                Destroy(blocker.gameObject);
+            }
+
+            ShowMessageDialog(
+                "霧ダメージ",
+                $"霧の中へ入り、HPが{fogDamage}減少しました。\n" +
+                $"現在HP {_session.Player.Hp}/{_session.Player.MaxHp}",
+                () => ResolveMapArrival(firstVisit));
+        }
+
         private void StartBattle()
         {
             _battle = _session.CreateBattleForCurrentNode();
@@ -405,11 +554,17 @@ namespace LostPage
                 $"{_session.Player.GetEtherDrawCount()}個取得。");
             _message = string.Join("\n", startMessages);
             ShowBattle();
-            if (!_tutorialCompletedThisSession &&
-                !_tutorialOfferedThisSession)
-            {
-                ShowTutorialWelcome();
-            }
+            var showTutorialAfterDraw =
+                !_tutorialCompletedThisSession &&
+                !_tutorialOfferedThisSession;
+            StartTurnEtherDrawAnimation(
+                () =>
+                {
+                    if (showTutorialAfterDraw)
+                    {
+                        ShowTutorialWelcome();
+                    }
+                });
         }
 
         private void ShowBattle()
@@ -422,6 +577,7 @@ namespace LostPage
             }
 
             var root = CreateScreen("BattleScreen");
+            ResetBattleVisualReferences();
             UiFactory.CreateText(
                 "BattleTitle",
                 root,
@@ -433,7 +589,7 @@ namespace LostPage
                 TextAnchor.MiddleLeft,
                 UiFactory.Accent);
 
-            UiFactory.CreateText(
+            _currentEtherHeader = UiFactory.CreateText(
                 "CurrentEther",
                 root,
                 new Vector2(0.52f, 0.94f),
@@ -479,7 +635,6 @@ namespace LostPage
 
         private void DrawEnemies(RectTransform root)
         {
-            _enemyRects.Clear();
             var panel = UiFactory.CreatePanel(
                 "Enemies",
                 root,
@@ -487,20 +642,26 @@ namespace LostPage
                 new Vector2(0.97f, 0.935f),
                 UiFactory.Panel);
 
-            DrawEtherPoolPanel(
+            _unusedEtherTitle = DrawEtherPoolPanel(
                 panel,
                 "UnusedPool",
                 new Vector2(0.015f, 0.08f),
                 new Vector2(0.195f, 0.92f),
                 "未使用エーテル",
-                _battle.Pool.Unused);
-            DrawEtherPoolPanel(
+                _battle.Pool.Unused,
+                _unusedEtherAnchors,
+                _unusedEtherCountTexts,
+                _visibleUnusedEther);
+            _spentEtherTitle = DrawEtherPoolPanel(
                 panel,
                 "SpentPool",
                 new Vector2(0.805f, 0.08f),
                 new Vector2(0.985f, 0.92f),
                 "使用済みエーテル",
-                _battle.Pool.Spent);
+                _battle.Pool.Spent,
+                _spentEtherAnchors,
+                _spentEtherCountTexts,
+                _visibleSpentEther);
 
             var count = _battle.Enemies.Count;
             var width = Mathf.Min(0.25f, 0.52f / count);
@@ -539,6 +700,8 @@ namespace LostPage
                     .Configure(enemyIndex);
                 button.interactable = enemy.IsAlive;
                 _enemyRects.Add(button.GetComponent<RectTransform>());
+                _enemyLabels.Add(
+                    button.transform.Find("Label").GetComponent<Text>());
                 UiFactory.CreateBar(
                     "HpBar",
                     button.transform,
@@ -546,16 +709,22 @@ namespace LostPage
                     new Vector2(0.92f, 0.12f),
                     (float)enemy.Hp / enemy.MaxHp,
                     UiFactory.Red);
+                _enemyHpBarFills.Add(
+                    button.transform.Find("HpBar/Fill")
+                        .GetComponent<RectTransform>());
             }
         }
 
-        private void DrawEtherPoolPanel(
+        private Text DrawEtherPoolPanel(
             RectTransform parent,
             string name,
             Vector2 anchorMin,
             Vector2 anchorMax,
             string title,
-            IReadOnlyDictionary<EtherType, int> pool)
+            IReadOnlyDictionary<EtherType, int> pool,
+            IDictionary<EtherType, RectTransform> anchors,
+            IDictionary<EtherType, Text> countTexts,
+            IDictionary<EtherType, int> visibleCounts)
         {
             var panel = UiFactory.CreatePanel(
                 name,
@@ -563,7 +732,7 @@ namespace LostPage
                 anchorMin,
                 anchorMax,
                 new Color32(45, 48, 61, 255));
-            UiFactory.CreateText(
+            var titleText = UiFactory.CreateText(
                 "Title",
                 panel,
                 new Vector2(0.04f, 0.72f),
@@ -579,7 +748,7 @@ namespace LostPage
                 var left = 0.06f + column * 0.47f;
                 var bottom = row == 0 ? 0.39f : 0.06f;
                 var icon = UiFactory.CreatePanel(
-                    $"Icon_{type}",
+                    $"{name}_Icon_{type}",
                     panel,
                     new Vector2(left, bottom),
                     new Vector2(left + 0.20f, bottom + 0.26f),
@@ -593,16 +762,21 @@ namespace LostPage
                     image.color = Color.white;
                 }
 
-                UiFactory.CreateText(
-                    $"Count_{type}",
+                var countText = UiFactory.CreateText(
+                    $"{name}_Count_{type}",
                     panel,
                     new Vector2(left + 0.20f, bottom),
                     new Vector2(left + 0.43f, bottom + 0.26f),
                     pool[type].ToString(),
                     22,
                     TextAnchor.MiddleLeft);
+                anchors[type] = icon;
+                countTexts[type] = countText;
+                visibleCounts[type] = pool[type];
                 index++;
             }
+
+            return titleText;
         }
 
         private void DrawCardDetails(RectTransform root)
@@ -889,16 +1063,34 @@ namespace LostPage
             foreach (EtherType type in Enum.GetValues(typeof(EtherType)))
             {
                 var left = 0.12f + etherIndex * 0.087f;
-                UiFactory.CreateText(
-                    $"Ether_{type}",
+                var icon = UiFactory.CreatePanel(
+                    $"CurrentEtherIcon_{type}",
                     panel,
-                    new Vector2(left, 0.23f),
+                    new Vector2(left, 0.27f),
+                    new Vector2(left + 0.026f, 0.45f),
+                    UiFactory.GetEtherColor(type));
+                var sprite = EtherTextureSet.GetSprite(type);
+                var image = icon.GetComponent<Image>();
+                if (sprite != null)
+                {
+                    image.sprite = sprite;
+                    image.preserveAspect = true;
+                    image.color = Color.white;
+                }
+
+                var countText = UiFactory.CreateText(
+                    $"CurrentEtherCount_{type}",
+                    panel,
+                    new Vector2(left + 0.028f, 0.23f),
                     new Vector2(left + 0.082f, 0.49f),
                     $"{CardCatalog.GetEtherName(type)} " +
                     $"{_battle.Pool.Current[type]}",
-                    22,
-                    TextAnchor.MiddleCenter,
+                    20,
+                    TextAnchor.MiddleLeft,
                     UiFactory.GetEtherColor(type));
+                _currentEtherAnchors[type] = icon;
+                _currentEtherCountTexts[type] = countText;
+                _visibleCurrentEther[type] = _battle.Pool.Current[type];
                 etherIndex++;
             }
 
@@ -1136,6 +1328,8 @@ namespace LostPage
             }
 
             var usedKind = _selectedCard.Kind;
+            var paidEther = ExpandEtherCounts(
+                CardCatalog.GetCost(usedKind));
             try
             {
                 _message = _battle.UseCard(_selectedCard, _selectedEnemyIndex);
@@ -1147,50 +1341,73 @@ namespace LostPage
                 return;
             }
 
-            var attackTargets = _battle.LastAttackTargetIndices.ToList();
-            if (attackTargets.Count > 0)
-            {
-                _isResolvingAction = true;
-                StartCoroutine(
-                    PlayAttackEffectThenFinish(
-                        usedKind,
-                        attackTargets));
-                return;
-            }
-
-            FinishCardUse(usedKind);
+            var attackHits = _battle.LastAttackHits.ToList();
+            _isResolvingAction = true;
+            StartCoroutine(
+                PlayCardResolutionThenFinish(
+                    usedKind,
+                    paidEther,
+                    attackHits));
         }
 
-        private IEnumerator PlayAttackEffectThenFinish(
+        private IEnumerator PlayCardResolutionThenFinish(
             CardKind usedKind,
-            IReadOnlyList<int> targetIndices)
+            IReadOnlyList<EtherType> paidEther,
+            IReadOnlyList<AttackHitResult> attackHits)
         {
-            var frames = AttackEffectSet.GetFrames();
-            if (frames.Count == 0)
+            var actionScreen = _screenRoot;
+            var blocker = CreateOverlay("BattleActionBlocker");
+            blocker.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
+            if (paidEther.Count > 0)
             {
+                yield return PlayEtherTransferBatch(
+                    blocker,
+                    paidEther,
+                    _currentEtherAnchors,
+                    _spentEtherAnchors,
+                    type =>
+                    {
+                        _visibleCurrentEther[type]--;
+                        UpdateEtherDisplays();
+                    },
+                    type =>
+                    {
+                        _visibleSpentEther[type]++;
+                        UpdateEtherDisplays();
+                    });
+            }
+
+            if (actionScreen != _screenRoot)
+            {
+                if (blocker != null)
+                {
+                    Destroy(blocker.gameObject);
+                }
+
                 _isResolvingAction = false;
-                FinishCardUse(usedKind);
                 yield break;
             }
 
-            var blocker = CreateOverlay("BattleActionBlocker");
-            blocker.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
-            if (usedKind == CardKind.RandomBarrage)
+            var frames = AttackEffectSet.GetFrames();
+            if (frames.Count > 0 && attackHits.Count > 0)
             {
-                foreach (var targetIndex in targetIndices)
+                if (usedKind == CardKind.RandomBarrage)
+                {
+                    foreach (var hit in attackHits)
+                    {
+                        yield return PlayAttackEffect(
+                            blocker,
+                            frames,
+                            new[] { hit });
+                    }
+                }
+                else
                 {
                     yield return PlayAttackEffect(
                         blocker,
                         frames,
-                        new[] { targetIndex });
+                        attackHits);
                 }
-            }
-            else
-            {
-                yield return PlayAttackEffect(
-                    blocker,
-                    frames,
-                    targetIndices.Distinct().ToArray());
             }
 
             if (blocker != null)
@@ -1205,10 +1422,12 @@ namespace LostPage
         private IEnumerator PlayAttackEffect(
             RectTransform parent,
             IReadOnlyList<Sprite> frames,
-            IReadOnlyList<int> targetIndices)
+            IReadOnlyList<AttackHitResult> hits)
         {
             var images = new List<Image>();
-            foreach (var targetIndex in targetIndices)
+            foreach (var targetIndex in hits
+                         .Select(hit => hit.TargetIndex)
+                         .Distinct())
             {
                 if (targetIndex < 0 || targetIndex >= _enemyRects.Count)
                 {
@@ -1226,6 +1445,7 @@ namespace LostPage
                 var image = effect.GetComponent<Image>();
                 image.preserveAspect = true;
                 image.raycastTarget = false;
+                image.sprite = frames[0];
                 images.Add(image);
             }
 
@@ -1234,12 +1454,20 @@ namespace LostPage
                 yield break;
             }
 
+            foreach (var hit in hits)
+            {
+                UpdateEnemyVisual(hit);
+            }
+
             const float frameDuration = 1f / 12f;
-            foreach (var frame in frames)
+            yield return new WaitForSecondsRealtime(frameDuration);
+            for (var frameIndex = 1;
+                 frameIndex < frames.Count;
+                 frameIndex++)
             {
                 foreach (var image in images)
                 {
-                    image.sprite = frame;
+                    image.sprite = frames[frameIndex];
                 }
 
                 yield return new WaitForSecondsRealtime(frameDuration);
@@ -1252,6 +1480,340 @@ namespace LostPage
                     Destroy(image.gameObject);
                 }
             }
+        }
+
+        private IEnumerator PlayEtherTransferBatch(
+            RectTransform parent,
+            IReadOnlyList<EtherType> etherTypes,
+            IReadOnlyDictionary<EtherType, RectTransform> sources,
+            IReadOnlyDictionary<EtherType, RectTransform> destinations,
+            Action<EtherType> onDeparture,
+            Action<EtherType> onArrival)
+        {
+            const float duration = 0.38f;
+            const float stagger = 0.08f;
+            var active = new List<EtherTransferVisual>();
+            var nextIndex = 0;
+            var batchElapsed = 0f;
+            Canvas.ForceUpdateCanvases();
+
+            while (nextIndex < etherTypes.Count || active.Count > 0)
+            {
+                if (parent == null)
+                {
+                    yield break;
+                }
+
+                var deltaTime = Mathf.Clamp(
+                    Time.unscaledDeltaTime,
+                    1f / 240f,
+                    1f / 30f);
+                batchElapsed += deltaTime;
+                while (nextIndex < etherTypes.Count &&
+                       batchElapsed >= nextIndex * stagger)
+                {
+                    var type = etherTypes[nextIndex];
+                    onDeparture(type);
+                    if (sources.TryGetValue(type, out var source) &&
+                        destinations.TryGetValue(type, out var destination) &&
+                        source != null &&
+                        destination != null)
+                    {
+                        active.Add(
+                            CreateEtherTransferVisual(
+                                parent,
+                                type,
+                                source.position,
+                                destination.position,
+                                nextIndex));
+                    }
+                    else
+                    {
+                        onArrival(type);
+                    }
+
+                    nextIndex++;
+                }
+
+                for (var index = active.Count - 1; index >= 0; index--)
+                {
+                    var transfer = active[index];
+                    transfer.Elapsed += deltaTime;
+                    var progress = Mathf.Clamp01(transfer.Elapsed / duration);
+                    var remaining = 1f - progress;
+                    transfer.Rect.position =
+                        remaining * remaining * transfer.Start +
+                        2f * remaining * progress * transfer.Control +
+                        progress * progress * transfer.End;
+                    var scale =
+                        1f + Mathf.Sin(progress * Mathf.PI) * 0.18f;
+                    transfer.Rect.localScale = Vector3.one * scale;
+                    if (progress < 1f)
+                    {
+                        continue;
+                    }
+
+                    onArrival(transfer.Type);
+                    if (transfer.Rect != null)
+                    {
+                        Destroy(transfer.Rect.gameObject);
+                    }
+
+                    active.RemoveAt(index);
+                }
+
+                yield return null;
+            }
+        }
+
+        private static EtherTransferVisual CreateEtherTransferVisual(
+            RectTransform parent,
+            EtherType type,
+            Vector3 start,
+            Vector3 end,
+            int index)
+        {
+            var rect = UiFactory.CreatePanel(
+                $"EtherTransfer_{type}_{index}",
+                parent,
+                new Vector2(0.5f, 0.5f),
+                new Vector2(0.5f, 0.5f),
+                UiFactory.GetEtherColor(type));
+            rect.sizeDelta = new Vector2(58f, 58f);
+            rect.position = start;
+            rect.SetAsLastSibling();
+            var image = rect.GetComponent<Image>();
+            image.raycastTarget = false;
+            var sprite = EtherTextureSet.GetSprite(type);
+            if (sprite != null)
+            {
+                image.sprite = sprite;
+                image.preserveAspect = true;
+                image.color = Color.white;
+            }
+
+            var direction = end - start;
+            var perpendicular = direction.sqrMagnitude > 0.001f
+                ? new Vector3(-direction.y, direction.x, 0f).normalized
+                : Vector3.up;
+            var curveAmount = Mathf.Clamp(
+                direction.magnitude * 0.16f,
+                48f,
+                120f);
+            var curveDirection = index % 2 == 0 ? 1f : -0.72f;
+            return new EtherTransferVisual
+            {
+                Type = type,
+                Rect = rect,
+                Start = start,
+                Control =
+                    (start + end) * 0.5f +
+                    perpendicular * curveAmount * curveDirection,
+                End = end
+            };
+        }
+
+        private static List<EtherType> ExpandEtherCounts(
+            IReadOnlyDictionary<EtherType, int> counts)
+        {
+            var result = new List<EtherType>();
+            foreach (EtherType type in Enum.GetValues(typeof(EtherType)))
+            {
+                if (!counts.TryGetValue(type, out var count))
+                {
+                    continue;
+                }
+
+                for (var index = 0; index < count; index++)
+                {
+                    result.Add(type);
+                }
+            }
+
+            return result;
+        }
+
+        private void UpdateEtherDisplays()
+        {
+            foreach (EtherType type in Enum.GetValues(typeof(EtherType)))
+            {
+                if (_unusedEtherCountTexts.TryGetValue(
+                        type,
+                        out var unusedText) &&
+                    unusedText != null)
+                {
+                    unusedText.text = _visibleUnusedEther[type].ToString();
+                }
+
+                if (_currentEtherCountTexts.TryGetValue(
+                        type,
+                        out var currentText) &&
+                    currentText != null)
+                {
+                    currentText.text =
+                        $"{CardCatalog.GetEtherName(type)} " +
+                        $"{_visibleCurrentEther[type]}";
+                }
+
+                if (_spentEtherCountTexts.TryGetValue(
+                        type,
+                        out var spentText) &&
+                    spentText != null)
+                {
+                    spentText.text = _visibleSpentEther[type].ToString();
+                }
+            }
+
+            if (_unusedEtherTitle != null)
+            {
+                _unusedEtherTitle.text =
+                    $"未使用エーテル　{_visibleUnusedEther.Values.Sum()}";
+            }
+
+            if (_currentEtherHeader != null)
+            {
+                _currentEtherHeader.text =
+                    $"手番エーテル {_visibleCurrentEther.Values.Sum()}　" +
+                    GetBattleToolStatus();
+            }
+
+            if (_spentEtherTitle != null)
+            {
+                _spentEtherTitle.text =
+                    $"使用済みエーテル　{_visibleSpentEther.Values.Sum()}";
+            }
+        }
+
+        private void UpdateEnemyVisual(AttackHitResult hit)
+        {
+            if (hit.TargetIndex < 0 ||
+                hit.TargetIndex >= _battle.Enemies.Count ||
+                hit.TargetIndex >= _enemyLabels.Count ||
+                hit.TargetIndex >= _enemyHpBarFills.Count)
+            {
+                return;
+            }
+
+            var enemy = _battle.Enemies[hit.TargetIndex];
+            var label = _enemyLabels[hit.TargetIndex];
+            label.text = hit.HpAfter > 0
+                ? $"{enemy.Name}\nHP {hit.HpAfter}/{enemy.MaxHp}　" +
+                  $"盾 {hit.ShieldAfter}\n次：{GetEnemyIntent(enemy)}"
+                : $"{enemy.Name}\n撃破";
+            var fill = _enemyHpBarFills[hit.TargetIndex];
+            fill.anchorMax = new Vector2(
+                Mathf.Clamp01((float)hit.HpAfter / enemy.MaxHp),
+                1f);
+        }
+
+        private void ResetBattleVisualReferences()
+        {
+            _enemyRects.Clear();
+            _enemyLabels.Clear();
+            _enemyHpBarFills.Clear();
+            _unusedEtherAnchors.Clear();
+            _currentEtherAnchors.Clear();
+            _spentEtherAnchors.Clear();
+            _unusedEtherCountTexts.Clear();
+            _currentEtherCountTexts.Clear();
+            _spentEtherCountTexts.Clear();
+            _visibleUnusedEther.Clear();
+            _visibleCurrentEther.Clear();
+            _visibleSpentEther.Clear();
+            _unusedEtherTitle = null;
+            _currentEtherHeader = null;
+            _spentEtherTitle = null;
+        }
+
+        private void StartTurnEtherDrawAnimation(Action onComplete = null)
+        {
+            if (_battle == null ||
+                _battle.Phase != BattlePhase.PlayerTurn ||
+                _battle.LastDrawnEtherTypes.Count == 0 ||
+                ShouldSkipTurnEtherAnimationForValidation())
+            {
+                onComplete?.Invoke();
+                return;
+            }
+
+            _isResolvingAction = true;
+            StartCoroutine(
+                PlayTurnEtherDrawThenFinish(onComplete));
+        }
+
+        private IEnumerator PlayTurnEtherDrawThenFinish(Action onComplete)
+        {
+            var actionScreen = _screenRoot;
+            var blocker = CreateOverlay("TurnEtherDrawBlocker");
+            blocker.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
+            PrepareTurnEtherDrawDisplay();
+            yield return PlayEtherTransferBatch(
+                blocker,
+                _battle.LastDrawnEtherTypes,
+                _unusedEtherAnchors,
+                _currentEtherAnchors,
+                type =>
+                {
+                    _visibleUnusedEther[type]--;
+                    UpdateEtherDisplays();
+                },
+                type =>
+                {
+                    _visibleCurrentEther[type]++;
+                    UpdateEtherDisplays();
+                });
+
+            if (blocker != null)
+            {
+                Destroy(blocker.gameObject);
+            }
+
+            _isResolvingAction = false;
+            if (actionScreen == _screenRoot)
+            {
+                onComplete?.Invoke();
+            }
+        }
+
+        private void PrepareTurnEtherDrawDisplay()
+        {
+            if (_battle == null)
+            {
+                return;
+            }
+
+            var drawnCounts = _battle.LastDrawnEtherTypes
+                .GroupBy(type => type)
+                .ToDictionary(group => group.Key, group => group.Count());
+            foreach (EtherType type in Enum.GetValues(typeof(EtherType)))
+            {
+                var drawnCount = drawnCounts.TryGetValue(
+                    type,
+                    out var count)
+                    ? count
+                    : 0;
+                _visibleUnusedEther[type] =
+                    _battle.LastUnusedAfterDraw[type] + drawnCount;
+                _visibleCurrentEther[type] =
+                    _battle.LastCurrentAfterDraw[type] - drawnCount;
+                _visibleSpentEther[type] =
+                    _battle.LastSpentAfterDraw[type];
+            }
+
+            UpdateEtherDisplays();
+        }
+
+        private static bool ShouldSkipTurnEtherAnimationForValidation()
+        {
+#if DEVELOPMENT_BUILD || UNITY_EDITOR
+            var arguments = Environment.GetCommandLineArgs();
+            return Array.IndexOf(arguments, "-lostPageCapture") >= 0 &&
+                   Array.IndexOf(
+                       arguments,
+                       "-lostPageCaptureEtherDrawAnimation") < 0;
+#else
+            return false;
+#endif
         }
 
         private void FinishCardUse(CardKind usedKind)
@@ -1543,6 +2105,11 @@ namespace LostPage
             {
                 _isResolvingAction = true;
                 ShowBattle();
+                if (_battle.Phase == BattlePhase.PlayerTurn)
+                {
+                    PrepareTurnEtherDrawDisplay();
+                }
+
                 StartCoroutine(ShakeThenFinishTurn(advanceToCharge));
                 return;
             }
@@ -1603,6 +2170,14 @@ namespace LostPage
             }
 
             ShowBattle();
+            StartTurnEtherDrawAnimation(
+                () =>
+                {
+                    if (advanceToCharge)
+                    {
+                        ShowBattle();
+                    }
+                });
         }
 
         private void HandleBattleVictory()
@@ -2094,13 +2669,21 @@ namespace LostPage
 
         private void ShowDefeat()
         {
+            ShowDefeat(null);
+        }
+
+        private void ShowDefeat(string reason)
+        {
             var root = CreateScreen("DefeatScreen");
             UiFactory.CreateText(
                 "Defeat",
                 root,
                 new Vector2(0.10f, 0.55f),
                 new Vector2(0.90f, 0.76f),
-                "DEFEAT\nプレイヤーのHPが0になった",
+                "DEFEAT\n" +
+                (string.IsNullOrEmpty(reason)
+                    ? "プレイヤーのHPが0になった"
+                    : reason),
                 52,
                 TextAnchor.MiddleCenter,
                 UiFactory.Red);
@@ -2410,7 +2993,10 @@ namespace LostPage
                 new Color(0f, 0f, 0f, 0.78f));
         }
 
-        private void ShowMessageDialog(string title, string message)
+        private void ShowMessageDialog(
+            string title,
+            string message,
+            Action onClose = null)
         {
             var overlay = CreateOverlay("MessageOverlay");
             var dialog = UiFactory.CreatePanel(
@@ -2441,7 +3027,11 @@ namespace LostPage
                 new Vector2(0.34f, 0.09f),
                 new Vector2(0.66f, 0.26f),
                 "閉じる",
-                () => Destroy(overlay.gameObject),
+                () =>
+                {
+                    Destroy(overlay.gameObject);
+                    onClose?.Invoke();
+                },
                 UiFactory.Green,
                 27);
         }
@@ -2622,29 +3212,43 @@ namespace LostPage
 
         private string GetNodeStateText(MapNode node)
         {
+            var fogText = _session.IsNodeInFog(node)
+                ? $"・霧-{_session.CurrentFogDamage}HP"
+                : string.Empty;
             if (node.Id == _session.CurrentNodeId)
             {
-                return "滞在中";
+                return $"滞在中{fogText}";
             }
 
             if (node.Cleared)
             {
-                return "訪問済み";
+                return $"訪問済み{fogText}";
             }
 
             if (node.Visited)
             {
-                return "イベント終了";
+                return _session.IsNodeInFog(node)
+                    ? $"終了{fogText}"
+                    : "イベント終了";
             }
 
-            return "未訪問";
+            return $"未訪問{fogText}";
         }
 
         private Color GetMapNodeColor(MapNode node, bool canTravel)
         {
             if (node.Id == _session.CurrentNodeId)
             {
-                return UiFactory.Green;
+                return _session.IsNodeInFog(node)
+                    ? new Color32(74, 91, 99, 255)
+                    : UiFactory.Green;
+            }
+
+            if (_session.IsNodeInFog(node))
+            {
+                return canTravel
+                    ? new Color32(72, 86, 94, 255)
+                    : new Color32(43, 54, 61, 255);
             }
 
             if (!canTravel)
@@ -2678,6 +3282,20 @@ namespace LostPage
                 default:
                     return UiFactory.PanelLight;
             }
+        }
+
+        private string GetFogStatusText()
+        {
+            if (_session.FogDepth < 0)
+            {
+                return
+                    $"霧まで{-_session.FogDepth}行・" +
+                    $"進入{_session.CurrentFogDamage}ダメージ";
+            }
+
+            return
+                $"霧 深度{_session.FogDepth}・" +
+                $"進入{_session.CurrentFogDamage}ダメージ";
         }
 
         private string GetOwnedToolSummary()
@@ -2799,6 +3417,8 @@ namespace LostPage
                 Array.IndexOf(arguments, "-lostPageCaptureNextLayer") >= 0;
             var captureSpecialMap =
                 Array.IndexOf(arguments, "-lostPageCaptureSpecialMap") >= 0;
+            var captureFogMap =
+                Array.IndexOf(arguments, "-lostPageCaptureFogMap") >= 0;
             var captureRandomEvent =
                 Array.IndexOf(arguments, "-lostPageCaptureRandomEvent") >= 0;
             var captureRewardStage =
@@ -2813,6 +3433,18 @@ namespace LostPage
                 Array.IndexOf(arguments, "-lostPageCaptureExpandedStatuses") >= 0;
             var captureOwnedTools =
                 Array.IndexOf(arguments, "-lostPageCaptureOwnedTools") >= 0;
+            var captureEtherDrawAnimation =
+                Array.IndexOf(
+                    arguments,
+                    "-lostPageCaptureEtherDrawAnimation") >= 0;
+            var captureEtherPaymentAnimation =
+                Array.IndexOf(
+                    arguments,
+                    "-lostPageCaptureEtherPaymentAnimation") >= 0;
+            var captureBarrageHitAnimation =
+                Array.IndexOf(
+                    arguments,
+                    "-lostPageCaptureBarrageHitAnimation") >= 0;
             var hiddenPersistentCardId = -1;
 
             var layerMarker = Array.IndexOf(arguments, "-lostPageCaptureLayer");
@@ -2878,6 +3510,33 @@ namespace LostPage
             if (captureSpecialMap)
             {
                 _session.Player.AddTool(CarryToolKind.AttackBoost);
+                _mapScrollY = 0f;
+                ShowMap();
+            }
+
+            if (captureFogMap)
+            {
+                for (var move = 0; move < 5; move++)
+                {
+                    _session.TravelTo(
+                        _session.CurrentNodeId == 0 ? 1 : 0);
+                }
+
+                ShowMap();
+                OnMapNodePressed(0);
+                yield return new WaitForSecondsRealtime(0.35f);
+                var fogDialogClose = GameObject.Find("Close");
+                if (GameObject.Find("MessageOverlay") == null ||
+                    fogDialogClose == null)
+                {
+                    throw new InvalidOperationException(
+                        "霧ダメージダイアログが表示されませんでした。");
+                }
+
+                fogDialogClose.GetComponent<Button>().onClick.Invoke();
+                _message =
+                    $"霧検証：6移動、HP " +
+                    $"{_session.Player.Hp}/{_session.Player.MaxHp}";
                 _mapScrollY = 0f;
                 ShowMap();
             }
@@ -2973,6 +3632,35 @@ namespace LostPage
                 _session.Player.AddTool(CarryToolKind.EnergyCore);
                 ShowMap();
                 ShowOwnedToolsOverlay();
+            }
+
+            if (captureEtherDrawAnimation)
+            {
+                TravelToStageForValidation(StageKind.Battle);
+                StartBattle();
+            }
+
+            if (captureEtherPaymentAnimation)
+            {
+                TravelToStageForValidation(StageKind.Battle);
+                StartBattle();
+                _selectedCard = _session.Player.Deck.First(
+                    card => card.Kind == CardKind.Attack);
+                EnsureCardCostForValidation(CardKind.Attack);
+                ShowBattle();
+                UseSelectedCard();
+            }
+
+            if (captureBarrageHitAnimation)
+            {
+                var barrageCard =
+                    _session.Player.AddCard(CardKind.RandomBarrage);
+                TravelToStageForValidation(StageKind.Battle);
+                StartBattle();
+                _selectedCard = barrageCard;
+                EnsureCardCostForValidation(CardKind.RandomBarrage);
+                ShowBattle();
+                UseSelectedCard();
             }
 
             if (Array.IndexOf(arguments, "-lostPageCaptureBattle") >= 0)
@@ -3189,8 +3877,32 @@ namespace LostPage
                     true);
             }
 
+            if (captureEtherDrawAnimation)
+            {
+                yield return new WaitForSecondsRealtime(0.42f);
+            }
+            else if (captureEtherPaymentAnimation)
+            {
+                yield return new WaitForSecondsRealtime(0.22f);
+            }
+            else if (captureBarrageHitAnimation)
+            {
+                yield return new WaitForSecondsRealtime(1.12f);
+            }
+
             Canvas.ForceUpdateCanvases();
             yield return new WaitForEndOfFrame();
+            if (captureFogMap &&
+                (GameObject.Find("FogArea") == null ||
+                 GameObject.Find("FogBorder") == null ||
+                 !_session.IsNodeInFog(_session.CurrentNode) ||
+                 _session.LastTravelFogDamage !=
+                    _session.CurrentFogDamage))
+            {
+                throw new InvalidOperationException(
+                    "霧マップの表示またはダメージ状態が不正です。");
+            }
+
             if (hiddenPersistentCardId >= 0 &&
                 GameObject.Find($"Card_{hiddenPersistentCardId}") != null)
             {
