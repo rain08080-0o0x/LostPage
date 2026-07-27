@@ -7,6 +7,8 @@ namespace LostPage
     public sealed class EtherPool
     {
         private readonly Random _random;
+        private readonly List<EtherType> _lastRefilledEtherTypes =
+            new List<EtherType>();
 
         public EtherPool(IEnumerable<CardInstance> deck, Random random)
         {
@@ -37,6 +39,11 @@ namespace LostPage
         public Dictionary<EtherType, int> Spent { get; } =
             new Dictionary<EtherType, int>();
 
+        public IReadOnlyList<EtherType> LastRefilledEtherTypes =>
+            _lastRefilledEtherTypes;
+
+        public int LastRefillDrawIndex { get; private set; } = -1;
+
         public int CurrentTotal => Current.Values.Sum();
 
         public int GetTotal(EtherType type)
@@ -65,11 +72,14 @@ namespace LostPage
 
         public List<EtherType> Draw(int count)
         {
+            _lastRefilledEtherTypes.Clear();
+            LastRefillDrawIndex = -1;
             var drawn = new List<EtherType>();
             for (var index = 0; index < count; index++)
             {
                 if (Unused.Values.Sum() == 0)
                 {
+                    RecordRefill(drawn.Count);
                     RefillUnused();
                 }
 
@@ -157,6 +167,23 @@ namespace LostPage
             }
 
             return result;
+        }
+
+        private void RecordRefill(int drawIndex)
+        {
+            if (Spent.Values.Sum() == 0)
+            {
+                return;
+            }
+
+            LastRefillDrawIndex = drawIndex;
+            foreach (EtherType type in Enum.GetValues(typeof(EtherType)))
+            {
+                for (var index = 0; index < Spent[type]; index++)
+                {
+                    _lastRefilledEtherTypes.Add(type);
+                }
+            }
         }
 
         private void RefillUnused()

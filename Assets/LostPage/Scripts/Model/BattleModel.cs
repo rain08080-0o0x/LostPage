@@ -98,6 +98,12 @@ namespace LostPage
             get;
             private set;
         } = Array.Empty<EtherType>();
+        public IReadOnlyList<EtherType> LastRefilledEtherTypes
+        {
+            get;
+            private set;
+        } = Array.Empty<EtherType>();
+        public int LastEtherRefillDrawIndex { get; private set; } = -1;
         public IReadOnlyDictionary<EtherType, int> LastUnusedAfterDraw
         {
             get;
@@ -723,6 +729,8 @@ namespace LostPage
 
             var drawn = Pool.Draw(_player.GetEtherDrawCount());
             LastDrawnEtherTypes = drawn;
+            LastRefilledEtherTypes = Pool.LastRefilledEtherTypes.ToArray();
+            LastEtherRefillDrawIndex = Pool.LastRefillDrawIndex;
             LastUnusedAfterDraw = CopyPool(Pool.Unused);
             LastCurrentAfterDraw = CopyPool(Pool.Current);
             LastSpentAfterDraw = CopyPool(Pool.Spent);

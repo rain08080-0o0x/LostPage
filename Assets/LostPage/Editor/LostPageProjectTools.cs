@@ -41,7 +41,7 @@ namespace LostPage.Editor
 
             PlayerSettings.companyName = "LostPagePrototype";
             PlayerSettings.productName = "Lost Page";
-            PlayerSettings.bundleVersion = "1.1.3";
+            PlayerSettings.bundleVersion = "1.1.4";
             PlayerSettings.defaultScreenWidth = 1920;
             PlayerSettings.defaultScreenHeight = 1080;
             PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
@@ -56,7 +56,7 @@ namespace LostPage.Editor
                 "com.lostpage.prototype");
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
             PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevelAuto;
-            PlayerSettings.Android.bundleVersionCode = 3;
+            PlayerSettings.Android.bundleVersionCode = 4;
 
             AssetDatabase.SaveAssets();
             Debug.Log("LOSTPAGE_SETUP_OK");
@@ -1106,7 +1106,15 @@ namespace LostPage.Editor
                     currentTokens[0],
                     currentTokens[1]
                 });
-            Require(attackBattle.Pool.CurrentTotal == 7, "持ち越し2個と新規取得5個");
+            Require(
+                attackBattle.Pool.CurrentTotal == 7 &&
+                attackBattle.LastEtherRefillDrawIndex == 3 &&
+                attackBattle.LastRefilledEtherTypes.Count == 3 &&
+                attackBattle.LastRefilledEtherTypes.All(
+                    type => type == EtherType.Red) &&
+                attackBattle.LastUnusedAfterDraw[EtherType.Red] == 1 &&
+                attackBattle.LastSpentAfterDraw.Values.Sum() == 0,
+                "持ち越し2個・新規取得5個・使用済みエーテル再利用記録");
             Require(
                 attackPlayer.Deck[0].CooldownRemaining == 0 &&
                 attackBattle.CanUse(attackPlayer.Deck[0]),
@@ -1311,6 +1319,30 @@ namespace LostPage.Editor
             Require(
                 !session.CanTravelTo(firstLayerBossId),
                 "未接続ボスへの移動禁止");
+
+            var horizontalTravelSession = new RunSession(54320);
+            horizontalTravelSession.TravelTo(1);
+            horizontalTravelSession.TravelTo(2);
+            var movesBeforeHorizontalTravel =
+                horizontalTravelSession.MapMoveCount;
+            var fogBeforeHorizontalTravel =
+                horizontalTravelSession.FogDepth;
+            Require(
+                horizontalTravelSession.Nodes.Single(node => node.Id == 2)
+                    .Depth ==
+                horizontalTravelSession.Nodes.Single(node => node.Id == 3)
+                    .Depth &&
+                horizontalTravelSession.CanTravelTo(3),
+                "同じ行の右隣マスへの横移動");
+            horizontalTravelSession.TravelTo(3);
+            Require(
+                horizontalTravelSession.CurrentNodeId == 3 &&
+                horizontalTravelSession.CanTravelTo(2) &&
+                horizontalTravelSession.MapMoveCount ==
+                    movesBeforeHorizontalTravel + 1 &&
+                horizontalTravelSession.FogDepth ==
+                    fogBeforeHorizontalTravel + 1,
+                "横移動の双方向接続と霧進行");
 
             var fogSession = new RunSession(54321);
             var fogStart = fogSession.CurrentNode;
@@ -1592,6 +1624,19 @@ namespace LostPage.Editor
                 if (row.Count != rowIndex + 1)
                 {
                     return false;
+                }
+
+                for (var column = 0; column < row.Count; column++)
+                {
+                    if ((column > 0 &&
+                         !row[column].Neighbors.Contains(
+                             row[column - 1].Id)) ||
+                        (column < row.Count - 1 &&
+                         !row[column].Neighbors.Contains(
+                             row[column + 1].Id)))
+                    {
+                        return false;
+                    }
                 }
 
                 if (rowIndex == rows.Count - 1)

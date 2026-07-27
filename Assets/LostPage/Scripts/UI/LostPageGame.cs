@@ -26,6 +26,15 @@ namespace LostPage
             Acquired
         }
 
+        private enum CardFilterMode
+        {
+            All,
+            Attack,
+            Defense,
+            Charge,
+            Persistent
+        }
+
         private sealed class EtherTransferVisual
         {
             public EtherType Type;
@@ -73,6 +82,7 @@ namespace LostPage
         private TutorialStep _tutorialStep;
         private int _remainingCardRewardSelections;
         private CardSortMode _cardSortMode = CardSortMode.UsableFirst;
+        private CardFilterMode _cardFilterMode = CardFilterMode.All;
         private readonly List<RectTransform> _enemyRects =
             new List<RectTransform>();
         private readonly List<Text> _enemyLabels = new List<Text>();
@@ -133,7 +143,7 @@ namespace LostPage
             _selectedCard = null;
             _selectedEnemyIndex = 0;
             _remainingCardRewardSelections = 0;
-            _cardSortMode = CardSortMode.UsableFirst;
+            ResetCardBrowsingState();
             _isResolvingAction = false;
             _message = "接続されているステージを選択してください。";
             ShowCarryToolSelection();
@@ -425,6 +435,7 @@ namespace LostPage
         private void OnMapNodePressed(int nodeId)
         {
             var firstVisit = _session.TravelTo(nodeId);
+            ResetCardBrowsingState();
             var fogDamage = _session.LastTravelFogDamage;
             if (fogDamage <= 0)
             {
@@ -570,10 +581,10 @@ namespace LostPage
         private void ShowBattle()
         {
             EnsureTutorialCardCostForCurrentStep();
-            if (_selectedCard != null && !ShouldDisplayCard(_selectedCard))
+            if (_selectedCard == null ||
+                !ShouldDisplayCardInCurrentFilter(_selectedCard))
             {
-                _selectedCard =
-                    _session.Player.Deck.FirstOrDefault(ShouldDisplayCard);
+                _selectedCard = GetSortedVisibleCards().FirstOrDefault();
             }
 
             var root = CreateScreen("BattleScreen");
@@ -881,10 +892,46 @@ namespace LostPage
 
         private void DrawCardRow(RectTransform root)
         {
+            DrawCardFilterButton(
+                root,
+                "All",
+                new Vector2(0.03f, 0.47f),
+                new Vector2(0.11f, 0.51f),
+                "全て",
+                CardFilterMode.All);
+            DrawCardFilterButton(
+                root,
+                "Attack",
+                new Vector2(0.115f, 0.47f),
+                new Vector2(0.215f, 0.51f),
+                "攻撃",
+                CardFilterMode.Attack);
+            DrawCardFilterButton(
+                root,
+                "Defense",
+                new Vector2(0.22f, 0.47f),
+                new Vector2(0.32f, 0.51f),
+                "防御",
+                CardFilterMode.Defense);
+            DrawCardFilterButton(
+                root,
+                "Charge",
+                new Vector2(0.325f, 0.47f),
+                new Vector2(0.445f, 0.51f),
+                "チャージ",
+                CardFilterMode.Charge);
+            DrawCardFilterButton(
+                root,
+                "Persistent",
+                new Vector2(0.45f, 0.47f),
+                new Vector2(0.57f, 0.51f),
+                "持続",
+                CardFilterMode.Persistent);
+
             UiFactory.CreateButton(
                 "CardSort",
                 root,
-                new Vector2(0.75f, 0.47f),
+                new Vector2(0.58f, 0.47f),
                 new Vector2(0.97f, 0.51f),
                 $"並び順：{GetCardSortModeLabel()}",
                 CycleCardSortMode,
@@ -968,10 +1015,31 @@ namespace LostPage
             scroll.onValueChanged.AddListener(value => _cardScrollX = value.x);
         }
 
+        private void DrawCardFilterButton(
+            RectTransform root,
+            string name,
+            Vector2 anchorMin,
+            Vector2 anchorMax,
+            string label,
+            CardFilterMode mode)
+        {
+            UiFactory.CreateButton(
+                $"CardFilter_{name}",
+                root,
+                anchorMin,
+                anchorMax,
+                label,
+                () => SetCardFilterMode(mode),
+                _cardFilterMode == mode
+                    ? new Color32(65, 117, 86, 255)
+                    : new Color32(72, 81, 104, 255),
+                18);
+        }
+
         private List<CardInstance> GetSortedVisibleCards()
         {
             var cards = _session.Player.Deck
-                .Where(ShouldDisplayCard);
+                .Where(ShouldDisplayCardInCurrentFilter);
             switch (_cardSortMode)
             {
                 case CardSortMode.UsableFirst:
@@ -989,6 +1057,41 @@ namespace LostPage
                     return cards
                         .OrderBy(card => card.Id)
                         .ToList();
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
+
+        private void SetCardFilterMode(CardFilterMode mode)
+        {
+            _cardFilterMode = mode;
+            _cardScrollX = 0f;
+            ShowBattle();
+        }
+
+        private bool ShouldDisplayCardInCurrentFilter(CardInstance card)
+        {
+            if (!ShouldDisplayCard(card))
+            {
+                return false;
+            }
+
+            switch (_cardFilterMode)
+            {
+                case CardFilterMode.All:
+                    return true;
+                case CardFilterMode.Attack:
+                    return CardCatalog.GetCategory(card.Kind) ==
+                           CardCategory.Attack;
+                case CardFilterMode.Defense:
+                    return CardCatalog.GetCategory(card.Kind) ==
+                           CardCategory.Defense;
+                case CardFilterMode.Charge:
+                    return CardCatalog.GetCategory(card.Kind) ==
+                           CardCategory.Charge;
+                case CardFilterMode.Persistent:
+                    return CardCatalog.GetCategory(card.Kind) ==
+                           CardCategory.Persistent;
                 default:
                     throw new ArgumentOutOfRangeException();
             }
@@ -1016,6 +1119,13 @@ namespace LostPage
                 Enum.GetValues(typeof(CardSortMode)).Length);
             _cardScrollX = 0f;
             ShowBattle();
+        }
+
+        private void ResetCardBrowsingState()
+        {
+            _cardFilterMode = CardFilterMode.All;
+            _cardSortMode = CardSortMode.UsableFirst;
+            _cardScrollX = 0f;
         }
 
         private static bool ShouldDisplayCard(CardInstance card)
@@ -1747,21 +1857,41 @@ namespace LostPage
             var blocker = CreateOverlay("TurnEtherDrawBlocker");
             blocker.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
             PrepareTurnEtherDrawDisplay();
-            yield return PlayEtherTransferBatch(
-                blocker,
-                _battle.LastDrawnEtherTypes,
-                _unusedEtherAnchors,
-                _currentEtherAnchors,
-                type =>
-                {
-                    _visibleUnusedEther[type]--;
-                    UpdateEtherDisplays();
-                },
-                type =>
-                {
-                    _visibleCurrentEther[type]++;
-                    UpdateEtherDisplays();
-                });
+            var refillDrawIndex = _battle.LastEtherRefillDrawIndex;
+            if (refillDrawIndex < 0)
+            {
+                yield return PlayTurnEtherDrawBatch(
+                    blocker,
+                    _battle.LastDrawnEtherTypes);
+            }
+            else
+            {
+                yield return PlayTurnEtherDrawBatch(
+                    blocker,
+                    _battle.LastDrawnEtherTypes
+                        .Take(refillDrawIndex)
+                        .ToList());
+                yield return PlayEtherTransferBatch(
+                    blocker,
+                    _battle.LastRefilledEtherTypes,
+                    _spentEtherAnchors,
+                    _unusedEtherAnchors,
+                    type =>
+                    {
+                        _visibleSpentEther[type]--;
+                        UpdateEtherDisplays();
+                    },
+                    type =>
+                    {
+                        _visibleUnusedEther[type]++;
+                        UpdateEtherDisplays();
+                    });
+                yield return PlayTurnEtherDrawBatch(
+                    blocker,
+                    _battle.LastDrawnEtherTypes
+                        .Skip(refillDrawIndex)
+                        .ToList());
+            }
 
             if (blocker != null)
             {
@@ -1775,6 +1905,27 @@ namespace LostPage
             }
         }
 
+        private IEnumerator PlayTurnEtherDrawBatch(
+            RectTransform parent,
+            IReadOnlyList<EtherType> etherTypes)
+        {
+            yield return PlayEtherTransferBatch(
+                parent,
+                etherTypes,
+                _unusedEtherAnchors,
+                _currentEtherAnchors,
+                type =>
+                {
+                    _visibleUnusedEther[type]--;
+                    UpdateEtherDisplays();
+                },
+                type =>
+                {
+                    _visibleCurrentEther[type]++;
+                    UpdateEtherDisplays();
+                });
+        }
+
         private void PrepareTurnEtherDrawDisplay()
         {
             if (_battle == null)
@@ -1785,6 +1936,18 @@ namespace LostPage
             var drawnCounts = _battle.LastDrawnEtherTypes
                 .GroupBy(type => type)
                 .ToDictionary(group => group.Key, group => group.Count());
+            var refillDrawIndex = _battle.LastEtherRefillDrawIndex;
+            var drawnBeforeRefillCounts = refillDrawIndex >= 0
+                ? _battle.LastDrawnEtherTypes
+                    .Take(refillDrawIndex)
+                    .GroupBy(type => type)
+                    .ToDictionary(group => group.Key, group => group.Count())
+                : null;
+            var refilledCounts = refillDrawIndex >= 0
+                ? _battle.LastRefilledEtherTypes
+                    .GroupBy(type => type)
+                    .ToDictionary(group => group.Key, group => group.Count())
+                : null;
             foreach (EtherType type in Enum.GetValues(typeof(EtherType)))
             {
                 var drawnCount = drawnCounts.TryGetValue(
@@ -1792,12 +1955,20 @@ namespace LostPage
                     out var count)
                     ? count
                     : 0;
-                _visibleUnusedEther[type] =
-                    _battle.LastUnusedAfterDraw[type] + drawnCount;
+                _visibleUnusedEther[type] = refillDrawIndex >= 0
+                    ? drawnBeforeRefillCounts.TryGetValue(
+                        type,
+                        out var drawnBeforeRefill)
+                        ? drawnBeforeRefill
+                        : 0
+                    : _battle.LastUnusedAfterDraw[type] + drawnCount;
                 _visibleCurrentEther[type] =
                     _battle.LastCurrentAfterDraw[type] - drawnCount;
-                _visibleSpentEther[type] =
-                    _battle.LastSpentAfterDraw[type];
+                _visibleSpentEther[type] = refillDrawIndex >= 0
+                    ? refilledCounts.TryGetValue(type, out var refilledCount)
+                        ? refilledCount
+                        : 0
+                    : _battle.LastSpentAfterDraw[type];
             }
 
             UpdateEtherDisplays();
@@ -2660,7 +2831,7 @@ namespace LostPage
             _selectedEnemyIndex = 0;
             _mapScrollX = 0.5f;
             _mapScrollY = 0f;
-            _cardScrollX = 0f;
+            ResetCardBrowsingState();
             _message =
                 $"{_session.CurrentLayer}層へ進みました。" +
                 "接続されているステージを選択してください。";
@@ -3411,6 +3582,8 @@ namespace LostPage
                 Array.IndexOf(arguments, "-lostPageCaptureTutorialSwipe") >= 0;
             var captureCardScroll =
                 Array.IndexOf(arguments, "-lostPageCaptureCardScroll") >= 0;
+            var captureCardFilter =
+                Array.IndexOf(arguments, "-lostPageCaptureCardFilter") >= 0;
             var captureShop =
                 Array.IndexOf(arguments, "-lostPageCaptureShop") >= 0;
             var captureNextLayer =
@@ -3437,6 +3610,10 @@ namespace LostPage
                 Array.IndexOf(
                     arguments,
                     "-lostPageCaptureEtherDrawAnimation") >= 0;
+            var captureEtherRefillAnimation =
+                Array.IndexOf(
+                    arguments,
+                    "-lostPageCaptureEtherRefillAnimation") >= 0;
             var captureEtherPaymentAnimation =
                 Array.IndexOf(
                     arguments,
@@ -3498,6 +3675,71 @@ namespace LostPage
                 _session.Player.AddCard(CardKind.Resonance);
                 TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
+            }
+
+            if (captureCardFilter)
+            {
+                _session.Player.AddCard(CardKind.HeavyAttack);
+                _session.Player.AddCard(CardKind.StrongDefense);
+                _session.Player.AddCard(CardKind.Resonance);
+                _session.Player.AddCard(CardKind.Persistent);
+                TravelToStageForValidation(StageKind.Battle);
+                StartBattle();
+                var filterModes = new[]
+                {
+                    CardFilterMode.Attack,
+                    CardFilterMode.Defense,
+                    CardFilterMode.Charge,
+                    CardFilterMode.Persistent
+                };
+                var filterCategories = new[]
+                {
+                    CardCategory.Attack,
+                    CardCategory.Defense,
+                    CardCategory.Charge,
+                    CardCategory.Persistent
+                };
+                for (var index = 0; index < filterModes.Length; index++)
+                {
+                    SetCardFilterMode(filterModes[index]);
+                    var filteredCards = GetSortedVisibleCards();
+                    if (filteredCards.Count == 0 ||
+                        filteredCards.Any(
+                            card =>
+                                CardCatalog.GetCategory(card.Kind) !=
+                                filterCategories[index]))
+                    {
+                        throw new InvalidOperationException(
+                            $"{filterCategories[index]}フィルターの対象が不正です。");
+                    }
+                }
+
+                _cardSortMode = CardSortMode.Acquired;
+                SetCardFilterMode(CardFilterMode.Attack);
+                var attackCard = GetSortedVisibleCards().First();
+                EnsureCardCostForValidation(attackCard.Kind);
+                _selectedCard = attackCard;
+                _battle.UseCard(attackCard, FindFirstAliveEnemy());
+                FinishCardUse(attackCard.Kind);
+                if (_cardFilterMode != CardFilterMode.Attack ||
+                    _cardSortMode != CardSortMode.Acquired)
+                {
+                    throw new InvalidOperationException(
+                        "カード使用後にフィルターまたは並び順が失われました。");
+                }
+
+                OnMapNodePressed(_session.CurrentNode.Neighbors[0]);
+                if (_cardFilterMode != CardFilterMode.All ||
+                    _cardSortMode != CardSortMode.UsableFirst)
+                {
+                    throw new InvalidOperationException(
+                        "ステージ移動時にカード表示設定が初期化されませんでした。");
+                }
+
+                TravelToStageForValidation(StageKind.Battle);
+                StartBattle();
+                _cardSortMode = CardSortMode.Acquired;
+                SetCardFilterMode(CardFilterMode.Attack);
             }
 
             if (captureShop)
@@ -3638,6 +3880,31 @@ namespace LostPage
             {
                 TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
+            }
+
+            if (captureEtherRefillAnimation)
+            {
+                TravelToStageForValidation(StageKind.Battle);
+                StartBattle();
+                foreach (EtherType type in Enum.GetValues(typeof(EtherType)))
+                {
+                    _battle.Pool.Unused[type] = 0;
+                    _battle.Pool.Current[type] = 0;
+                    _battle.Pool.Spent[type] = 0;
+                }
+
+                _battle.Pool.Current[EtherType.Red] = 1;
+                _battle.Pool.Current[EtherType.Blue] = 1;
+                _battle.Pool.Spent[EtherType.Red] = 3;
+                _battle.Pool.Spent[EtherType.Blue] = 2;
+                _battle.Pool.Spent[EtherType.Yellow] = 2;
+                _battle.Pool.Spent[EtherType.Purple] = 2;
+                _session.Player.Shield = 999;
+                _message = _battle.EndPlayerTurn(
+                    new[] { EtherType.Red, EtherType.Blue });
+                ShowBattle();
+                _isResolvingAction = true;
+                StartCoroutine(PlayTurnEtherDrawThenFinish(null));
             }
 
             if (captureEtherPaymentAnimation)
@@ -3861,6 +4128,22 @@ namespace LostPage
                 ExecuteCardRowScrollForValidation();
             }
 
+            if (captureCardFilter &&
+                (GameObject.Find("CardFilter_All") == null ||
+                 GameObject.Find("CardFilter_Attack") == null ||
+                 GameObject.Find("CardFilter_Defense") == null ||
+                 GameObject.Find("CardFilter_Charge") == null ||
+                 GameObject.Find("CardFilter_Persistent") == null ||
+                 GetSortedVisibleCards().Count == 0 ||
+                 GetSortedVisibleCards().Any(
+                     card =>
+                         CardCatalog.GetCategory(card.Kind) !=
+                         CardCategory.Attack)))
+            {
+                throw new InvalidOperationException(
+                    "カードカテゴリーフィルターの表示状態が不正です。");
+            }
+
             if (captureDragAttack || captureDropAttack)
             {
                 ExecuteCardDragForValidation(
@@ -3877,7 +4160,11 @@ namespace LostPage
                     true);
             }
 
-            if (captureEtherDrawAnimation)
+            if (captureEtherRefillAnimation)
+            {
+                yield return new WaitForSecondsRealtime(0.28f);
+            }
+            else if (captureEtherDrawAnimation)
             {
                 yield return new WaitForSecondsRealtime(0.42f);
             }
@@ -3901,6 +4188,16 @@ namespace LostPage
             {
                 throw new InvalidOperationException(
                     "霧マップの表示またはダメージ状態が不正です。");
+            }
+
+            if (captureEtherRefillAnimation &&
+                (_battle.LastEtherRefillDrawIndex != 0 ||
+                 _battle.LastRefilledEtherTypes.Count != 9 ||
+                 _battle.LastSpentAfterDraw.Values.Sum() != 0 ||
+                 GameObject.Find("EtherTransfer_Red_0") == null))
+            {
+                throw new InvalidOperationException(
+                    "使用済みエーテル再利用アニメーションの状態が不正です。");
             }
 
             if (hiddenPersistentCardId >= 0 &&

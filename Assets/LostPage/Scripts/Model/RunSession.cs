@@ -499,6 +499,16 @@ namespace LostPage
                         }
                     }
 
+                    if (column > 0)
+                    {
+                        neighbors.Add(id - 1);
+                    }
+
+                    if (column < rowWidth - 1)
+                    {
+                        neighbors.Add(id + 1);
+                    }
+
                     if (row == rowCount - 1)
                     {
                         neighbors.Add(bossId);
