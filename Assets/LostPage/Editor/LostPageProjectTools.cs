@@ -19,6 +19,8 @@ namespace LostPage.Editor
             "Assets/LostPage/Resource/Tutorial";
         private const string AttackEffectTexturePath =
             "Assets/LostPage/Resource/Texture/bom.png";
+        private const string AttackEffectTextureObjectName =
+            "AttackEffectTexture";
 
         [MenuItem("Lost Page/Setup Project")]
         public static void SetupProject()
@@ -41,7 +43,7 @@ namespace LostPage.Editor
 
             PlayerSettings.companyName = "LostPagePrototype";
             PlayerSettings.productName = "Lost Page";
-            PlayerSettings.bundleVersion = "1.2.1";
+            PlayerSettings.bundleVersion = "1.2.2";
             PlayerSettings.defaultScreenWidth = 1920;
             PlayerSettings.defaultScreenHeight = 1080;
             PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
@@ -56,7 +58,7 @@ namespace LostPage.Editor
                 "com.lostpage.prototype");
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
             PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevelAuto;
-            PlayerSettings.Android.bundleVersionCode = 7;
+            PlayerSettings.Android.bundleVersionCode = 8;
 
             AssetDatabase.SaveAssets();
             Debug.Log("LOSTPAGE_SETUP_OK");
@@ -108,7 +110,8 @@ namespace LostPage.Editor
                     AttackEffectTexturePath);
             }
 
-            if (importer.textureType != TextureImporterType.Default ||
+            if (importer.textureType != TextureImporterType.Sprite ||
+                importer.spriteImportMode != SpriteImportMode.Single ||
                 !importer.alphaIsTransparency ||
                 importer.mipmapEnabled ||
                 importer.wrapMode != TextureWrapMode.Clamp ||
@@ -116,7 +119,8 @@ namespace LostPage.Editor
                 importer.textureCompression !=
                     TextureImporterCompression.Uncompressed)
             {
-                importer.textureType = TextureImporterType.Default;
+                importer.textureType = TextureImporterType.Sprite;
+                importer.spriteImportMode = SpriteImportMode.Single;
                 importer.alphaIsTransparency = true;
                 importer.mipmapEnabled = false;
                 importer.wrapMode = TextureWrapMode.Clamp;
@@ -126,26 +130,27 @@ namespace LostPage.Editor
                 importer.SaveAndReimport();
             }
 
-            var texture =
-                AssetDatabase.LoadAssetAtPath<Texture2D>(AttackEffectTexturePath);
-            if (texture == null)
+            var sprite =
+                AssetDatabase.LoadAssetAtPath<Sprite>(AttackEffectTexturePath);
+            if (sprite == null)
             {
                 throw new InvalidOperationException(
-                    $"攻撃エフェクト画像を読み込めません：{AttackEffectTexturePath}");
+                    $"攻撃エフェクト画像をSpriteとして読み込めません：{AttackEffectTexturePath}");
             }
 
-            if (texture.width != 600 ||
-                texture.height != 120 ||
-                texture.width % 5 != 0)
+            if (sprite.texture.width != 600 ||
+                sprite.texture.height != 120 ||
+                sprite.texture.width % 5 != 0)
             {
                 throw new InvalidOperationException(
                     "攻撃エフェクト画像は600x120・横5フレームである必要があります。");
             }
 
             var effectObject = new GameObject("AttackEffectSet");
-            effectObject
-                .AddComponent<AttackEffectSet>()
-                .Configure(texture, 5);
+            CreateSpriteReference(
+                effectObject.transform,
+                AttackEffectTextureObjectName,
+                sprite);
         }
 
         private static void CreateSpriteReference(
@@ -2304,6 +2309,7 @@ namespace LostPage.Editor
             EditorUserBuildSettings.SwitchActiveBuildTarget(
                 BuildTargetGroup.Android,
                 BuildTarget.Android);
+            EnsureMainSceneHasNoMissingScripts();
             EditorUserBuildSettings.buildAppBundle = false;
             Directory.CreateDirectory("Builds/Android");
             var options = new BuildPlayerOptions
@@ -2314,6 +2320,32 @@ namespace LostPage.Editor
                 options = BuildOptions.None
             };
             EnsureBuildSucceeded(BuildPipeline.BuildPlayer(options), "Android");
+        }
+
+        private static void EnsureMainSceneHasNoMissingScripts()
+        {
+            var scene = EditorSceneManager.OpenScene(
+                MainScenePath,
+                OpenSceneMode.Single);
+            var missingScriptObjects = scene
+                .GetRootGameObjects()
+                .SelectMany(
+                    root =>
+                        root.GetComponentsInChildren<Transform>(true))
+                .Select(transform => transform.gameObject)
+                .Where(
+                    gameObject =>
+                        GameObjectUtility
+                            .GetMonoBehavioursWithMissingScriptCount(
+                                gameObject) > 0)
+                .Select(gameObject => gameObject.name)
+                .ToList();
+            if (missingScriptObjects.Count > 0)
+            {
+                throw new InvalidOperationException(
+                    "Mainシーンに参照切れスクリプトがあります：" +
+                    string.Join(", ", missingScriptObjects));
+            }
         }
 
         private static void Require(bool condition, string label)

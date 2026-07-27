@@ -6,8 +6,11 @@ namespace LostPage
 {
     public sealed class AttackEffectSet : MonoBehaviour
     {
+        private const string SceneTextureObjectName = "AttackEffectTexture";
+        private const int DefaultFrameCount = 5;
+
         [SerializeField] private Texture2D spriteSheet;
-        [SerializeField] private int frameCount = 5;
+        [SerializeField] private int frameCount = DefaultFrameCount;
 
         private static AttackEffectSet _instance;
         private static IReadOnlyList<Sprite> _frames;
@@ -20,33 +23,31 @@ namespace LostPage
 
         public static IReadOnlyList<Sprite> GetFrames()
         {
-            EnsureInstance();
             if (_frames != null)
             {
                 return _frames;
             }
 
-            if (_instance == null ||
-                _instance.spriteSheet == null ||
-                _instance.frameCount <= 0 ||
-                _instance.spriteSheet.width % _instance.frameCount != 0)
+            ResolveTexture(out var texture, out var count);
+            if (texture == null ||
+                count <= 0 ||
+                texture.width % count != 0)
             {
                 return Array.Empty<Sprite>();
             }
 
-            var frameWidth =
-                _instance.spriteSheet.width / _instance.frameCount;
-            var frames = new List<Sprite>(_instance.frameCount);
-            for (var index = 0; index < _instance.frameCount; index++)
+            var frameWidth = texture.width / count;
+            var frames = new List<Sprite>(count);
+            for (var index = 0; index < count; index++)
             {
                 frames.Add(
                     Sprite.Create(
-                        _instance.spriteSheet,
+                        texture,
                         new Rect(
                             index * frameWidth,
                             0,
                             frameWidth,
-                            _instance.spriteSheet.height),
+                            texture.height),
                         new Vector2(0.5f, 0.5f),
                         100f));
             }
@@ -55,12 +56,31 @@ namespace LostPage
             return _frames;
         }
 
-        private static void EnsureInstance()
+        private static void ResolveTexture(
+            out Texture2D texture,
+            out int count)
         {
             if (_instance == null)
             {
                 _instance = FindAnyObjectByType<AttackEffectSet>();
             }
+
+            if (_instance != null && _instance.spriteSheet != null)
+            {
+                texture = _instance.spriteSheet;
+                count = _instance.frameCount;
+                return;
+            }
+
+            var textureObject = GameObject.Find(SceneTextureObjectName);
+            var spriteRenderer = textureObject == null
+                ? null
+                : textureObject.GetComponent<SpriteRenderer>();
+            texture = spriteRenderer == null ||
+                      spriteRenderer.sprite == null
+                ? null
+                : spriteRenderer.sprite.texture;
+            count = DefaultFrameCount;
         }
 
 #if UNITY_EDITOR
