@@ -328,8 +328,20 @@ namespace LostPage
             }
 
             Pool.EndTurn(carried, _player.GetCarryLimit());
+            var messages = new List<string>();
+            var autoDefenseMessage = ApplyAutoDefenseAtTurnEnd();
+            if (!string.IsNullOrEmpty(autoDefenseMessage))
+            {
+                messages.Add(autoDefenseMessage);
+            }
+
+            if (Phase == BattlePhase.Victory)
+            {
+                return string.Join("\n", messages);
+            }
+
             Phase = BattlePhase.EnemyTurn;
-            var messages = ExecuteEnemyTurn();
+            messages.AddRange(ExecuteEnemyTurn());
 
             if (_player.Hp <= 0)
             {
@@ -348,6 +360,23 @@ namespace LostPage
                 $"ターン{TurnNumber}：エーテルを" +
                 $"{_player.GetEtherDrawCount()}個取得。");
             return string.Join("\n", messages);
+        }
+
+        private string ApplyAutoDefenseAtTurnEnd()
+        {
+            if (AutoDefenseStacks <= 0)
+            {
+                return string.Empty;
+            }
+
+            var autoDefenseShield =
+                AutoDefenseStacks + DefensePowerBonus;
+            var judgmentMessage = GainShield(autoDefenseShield);
+            AutoDefenseStacks--;
+            return
+                $"自動防御：シールドを{autoDefenseShield}獲得。" +
+                $"残り{AutoDefenseStacks}層。" +
+                judgmentMessage;
         }
 
         private string UseAttack(CardInstance card, int targetIndex)
@@ -703,18 +732,6 @@ namespace LostPage
             else
             {
                 _player.Shield = 0;
-            }
-
-            if (AutoDefenseStacks > 0)
-            {
-                var autoDefenseShield =
-                    AutoDefenseStacks + DefensePowerBonus;
-                var judgmentMessage = GainShield(autoDefenseShield);
-                AutoDefenseStacks--;
-                messages.Add(
-                    $"自動防御：シールドを{autoDefenseShield}獲得。" +
-                    $"残り{AutoDefenseStacks}層。" +
-                    judgmentMessage);
             }
 
             if (PendingCharge == 0)

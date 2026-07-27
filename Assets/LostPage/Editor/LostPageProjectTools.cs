@@ -41,7 +41,7 @@ namespace LostPage.Editor
 
             PlayerSettings.companyName = "LostPagePrototype";
             PlayerSettings.productName = "Lost Page";
-            PlayerSettings.bundleVersion = "1.1.5";
+            PlayerSettings.bundleVersion = "1.1.6";
             PlayerSettings.defaultScreenWidth = 1920;
             PlayerSettings.defaultScreenHeight = 1080;
             PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
@@ -56,7 +56,7 @@ namespace LostPage.Editor
                 "com.lostpage.prototype");
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
             PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevelAuto;
-            PlayerSettings.Android.bundleVersionCode = 5;
+            PlayerSettings.Android.bundleVersionCode = 6;
 
             AssetDatabase.SaveAssets();
             Debug.Log("LOSTPAGE_SETUP_OK");
@@ -488,20 +488,64 @@ namespace LostPage.Editor
             Require(
                 autoDefenseBattle.AutoDefenseStacks == 3,
                 "自動防御3層の獲得");
-            autoDefenseBattle.EndPlayerTurn(
+            var firstAutoDefenseTurn =
+                autoDefenseBattle.EndPlayerTurn(
                 autoDefenseBattle.Pool.GetCurrentTokens());
             Require(
-                autoDefensePlayer.Shield == 3 &&
+                autoDefensePlayer.Hp == 100 &&
+                autoDefensePlayer.Shield == 0 &&
                 autoDefenseBattle.AutoDefenseStacks == 2,
-                "自動防御の1回目発動");
+                "自動防御が自ターン終了時に敵攻撃を防ぐ");
+            var autoDefenseMessageIndex =
+                firstAutoDefenseTurn.IndexOf(
+                    "自動防御：",
+                    StringComparison.Ordinal);
+            var enemyActionMessageIndex =
+                firstAutoDefenseTurn.IndexOf(
+                    "自動防御検証用の攻撃",
+                    StringComparison.Ordinal);
+            Require(
+                autoDefenseMessageIndex >= 0 &&
+                enemyActionMessageIndex >= 0 &&
+                autoDefenseMessageIndex < enemyActionMessageIndex,
+                "自動防御は敵行動より先に発動");
             autoDefenseBattle.EndPlayerTurn(
                 autoDefenseBattle.Pool.GetCurrentTokens()
                     .Take(2)
                     .ToList());
             Require(
-                autoDefensePlayer.Shield == 2 &&
+                autoDefensePlayer.Hp == 100 &&
+                autoDefensePlayer.Shield == 0 &&
                 autoDefenseBattle.AutoDefenseStacks == 1,
-                "自動防御の層減少");
+                "自動防御はターン終了ごとに1層減少");
+
+            var autoJudgmentPlayer = new PlayerState();
+            autoJudgmentPlayer.Deck.Clear();
+            autoJudgmentPlayer.AddTool(CarryToolKind.GuardianJudgment);
+            var autoJudgmentCard =
+                autoJudgmentPlayer.AddCard(CardKind.AutoDefense);
+            var autoJudgmentTarget = new EnemyState(
+                "自動防御裁き検証用",
+                2,
+                100,
+                0,
+                EnemyActionKind.Attack);
+            var autoJudgmentBattle = new BattleModel(
+                autoJudgmentPlayer,
+                new[] { autoJudgmentTarget },
+                new System.Random(71));
+            SetCurrentEther(
+                autoJudgmentBattle.Pool,
+                (EtherType.Blue, 2));
+            autoJudgmentBattle.UseCard(autoJudgmentCard, 0);
+            autoJudgmentPlayer.Shield = 7;
+            autoJudgmentBattle.EndPlayerTurn(
+                autoJudgmentBattle.Pool.GetCurrentTokens());
+            Require(
+                autoJudgmentBattle.Phase == BattlePhase.Victory &&
+                autoJudgmentPlayer.Hp == 100 &&
+                !autoJudgmentTarget.IsAlive,
+                "自動防御の守護者の裁きで勝利した場合は敵が行動しない");
 
             var persistentPlayer = new PlayerState();
             persistentPlayer.Deck.Clear();
