@@ -5,27 +5,27 @@
 毎ターン得られるエーテルはランダムですが、その色と総数は自分のデッキに入れたカードのコストから作られます。強いカードを増やすほど行動の選択肢は広がる一方、必要な色を引ける確率も変わる――デッキ構築と戦闘中のリソース管理が一体になったゲームです。
 
 - 対応環境：Windows 64-bit / Android 8.0以上（ARM64）
-- 最新公開版：v1.1.4
+- 最新公開版：v1.1.5
 - 開発ブランチ：`alpha`
 - 開発環境：Unity 6000.3.12f1
 - 企画・現行仕様：[LostPage企画草案.md](./LostPage企画草案.md)
 
 ## ダウンロード
 
-[GitHub Releases](https://github.com/rain08080-0o0x/LostPage/releases/tag/v1.1.4)から、使用する端末に合ったファイルをダウンロードしてください。
+[GitHub Releases](https://github.com/rain08080-0o0x/LostPage/releases/tag/v1.1.5)から、使用する端末に合ったファイルをダウンロードしてください。
 
-v1.1.4では、同じ行にある隣接マスへの横移動、カードカテゴリーフィルター、使用済みエーテルを未使用へ戻すアニメーションを追加しました。
+v1.1.5では、マップ画面下部の「遊び方」を左側、「所持道具を見る」を右側へ分離し、UIの重なりを解消しました。
 
 | 環境 | ダウンロード | 内容 |
 | --- | --- | --- |
-| Android | [LostPage-v1.1.4-Android.apk](https://github.com/rain08080-0o0x/LostPage/releases/download/v1.1.4/LostPage-v1.1.4-Android.apk) | Android 8.0（API 26）以上、ARM64 |
-| Windows | [LostPage-v1.1.4-Windows.zip](https://github.com/rain08080-0o0x/LostPage/releases/download/v1.1.4/LostPage-v1.1.4-Windows.zip) | 64-bit Windows用の実行ファイル一式 |
+| Android | [LostPage-v1.1.5-Android.apk](https://github.com/rain08080-0o0x/LostPage/releases/download/v1.1.5/LostPage-v1.1.5-Android.apk) | Android 8.0（API 26）以上、ARM64 |
+| Windows | [LostPage-v1.1.5-Windows.zip](https://github.com/rain08080-0o0x/LostPage/releases/download/v1.1.5/LostPage-v1.1.5-Windows.zip) | 64-bit Windows用の実行ファイル一式 |
 
 ## 起動方法
 
 ### Windows
 
-1. `LostPage-v1.1.4-Windows.zip`をダウンロードします。
+1. `LostPage-v1.1.5-Windows.zip`をダウンロードします。
 2. ZIPを右クリックし、「すべて展開」などで任意のフォルダへ展開します。
 3. 展開先にある`LostPage.exe`を起動します。
 
@@ -33,12 +33,12 @@ v1.1.4では、同じ行にある隣接マスへの横移動、カードカテ�
 
 ### Android
 
-1. `LostPage-v1.1.4-Android.apk`を端末へダウンロードします。
+1. `LostPage-v1.1.5-Android.apk`を端末へダウンロードします。
 2. Androidの案内に従い、使用したブラウザまたはファイル管理アプリに「不明なアプリのインストール」を一時的に許可します。
 3. APKを開いてインストールします。
 4. アプリ一覧から「Lost Page」を起動し、横画面でプレイします。
 
-APK以外の追加ファイルは不要です。v1.1.4のAPKはGitHub配布用のデバッグ証明書で署名されており、Google Play向けの正式署名版ではありません。
+APK以外の追加ファイルは不要です。v1.1.5のAPKはGitHub配布用のデバッグ証明書で署名されており、Google Play向けの正式署名版ではありません。
 
 ## このゲームの面白さ
 
@@ -239,9 +239,9 @@ APK以外の追加ファイルは不要です。v1.1.4のAPKはGitHub配布用�
 - モデル検証処理と画面検証用機能の作成、主要カード・報酬・階層・道具ルールの回帰確認
 - Android端末をADB接続した起動調査とクラッシュ原因の修正、開発版の実機起動確認
 - Windows版の起動確認、Android APKの構成・署名・対応API・CPUアーキテクチャ確認
-- v1.1.1、v1.1.2、v1.1.3、v1.1.4へのバージョン統一、Development Buildを外したWindows/Androidリリースビルド
+- v1.1.1、v1.1.2、v1.1.3、v1.1.4、v1.1.5へのバージョン統一、Development Buildを外したWindows/Androidリリースビルド
 - Android APK、Windows ZIPの作成、内容検査、SHA-256照合
-- `.gitignore`、README、公開リポジトリ、Git履歴、GitHub Release v1.1.1・v1.1.2・v1.1.3・v1.1.4の整備
+- `.gitignore`、README、公開リポジトリ、Git履歴、GitHub Release v1.1.1・v1.1.2・v1.1.3・v1.1.4・v1.1.5の整備
 - 本READMEと企画・現行仕様書の整理
 
 ## 主なコード構成
@@ -279,7 +279,7 @@ AndroidビルドにはUnity HubからAndroid Build Support、SDK、NDK、OpenJDK
 - セーブ機能は未実装です。戦闘中・マップ進行中とも、アプリを終了するとランを再開できません。
 - バフ・デバフのアイコンは表示されますが、タップして詳細を開く機能は未実装です。
 - 攻撃・エーテル移動・HP被ダメ時の画面揺れ以外のキャラクター演出、ストーリー、音楽・効果音は現段階では用意されていません。
-- v1.1.4のAndroid APKはデバッグ証明書で署名されています。
+- v1.1.5のAndroid APKはデバッグ証明書で署名されています。
 - ゲームバランスと表示は開発中のため、今後変更される可能性があります。
 
 ## ライセンス

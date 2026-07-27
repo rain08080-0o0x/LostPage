@@ -281,7 +281,7 @@ namespace LostPage
             UiFactory.CreateButton(
                 "OwnedTools",
                 root,
-                new Vector2(0.78f, 0.025f),
+                new Vector2(0.80f, 0.025f),
                 new Vector2(0.97f, 0.095f),
                 "所持道具を見る",
                 ShowOwnedToolsOverlay,
@@ -291,8 +291,8 @@ namespace LostPage
             UiFactory.CreateText(
                 "Message",
                 root,
-                new Vector2(0.03f, 0.015f),
-                new Vector2(0.81f, 0.105f),
+                new Vector2(0.21f, 0.015f),
+                new Vector2(0.79f, 0.105f),
                 _message,
                 27,
                 TextAnchor.MiddleCenter);
@@ -300,8 +300,8 @@ namespace LostPage
             UiFactory.CreateButton(
                 "HowToPlay",
                 root,
-                new Vector2(0.83f, 0.025f),
-                new Vector2(0.97f, 0.10f),
+                new Vector2(0.03f, 0.025f),
+                new Vector2(0.20f, 0.095f),
                 "遊び方",
                 () => ShowTutorialBook(0),
                 new Color32(72, 81, 104, 255),
