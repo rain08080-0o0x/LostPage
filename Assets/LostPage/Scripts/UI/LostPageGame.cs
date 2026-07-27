@@ -32,7 +32,8 @@ namespace LostPage
             Attack,
             Defense,
             Charge,
-            Persistent
+            Persistent,
+            Special
         }
 
         private sealed class EtherTransferVisual
@@ -74,6 +75,8 @@ namespace LostPage
         private float _mapScrollY;
         private float _cardScrollX;
         private float _shopScrollX;
+        private CardCategory _shopCategory = CardCategory.Attack;
+        private CardCategory _ownedCardCategory = CardCategory.Attack;
         private RectTransform _dragGhost;
         private RectTransform _tutorialBookOverlay;
         private int _tutorialPageIndex;
@@ -279,6 +282,16 @@ namespace LostPage
             });
 
             UiFactory.CreateButton(
+                "OwnedCards",
+                root,
+                new Vector2(0.65f, 0.025f),
+                new Vector2(0.79f, 0.095f),
+                "所持カード",
+                ShowOwnedCardsOverlay,
+                new Color32(76, 82, 103, 255),
+                20);
+
+            UiFactory.CreateButton(
                 "OwnedTools",
                 root,
                 new Vector2(0.80f, 0.025f),
@@ -292,7 +305,7 @@ namespace LostPage
                 "Message",
                 root,
                 new Vector2(0.21f, 0.015f),
-                new Vector2(0.79f, 0.105f),
+                new Vector2(0.64f, 0.105f),
                 _message,
                 27,
                 TextAnchor.MiddleCenter);
@@ -691,7 +704,8 @@ namespace LostPage
                         : new Color32(83, 65, 67, 255);
                 var label = enemy.IsAlive
                     ? $"{enemy.Name}\nHP {enemy.Hp}/{enemy.MaxHp}　盾 {enemy.Shield}\n" +
-                      $"次：{GetEnemyIntent(enemy)}"
+                      $"次：{GetEnemyIntent(enemy)}" +
+                      GetEnemyStatusText(enemy)
                     : $"{enemy.Name}\n撃破";
                 var button = UiFactory.CreateButton(
                     $"Enemy_{index}",
@@ -818,12 +832,14 @@ namespace LostPage
                 panel,
                 new Vector2(0.025f, 0.56f),
                 new Vector2(0.35f, 0.94f),
+                $"{( _selectedCard.IsUpgraded ? "【強化済】" : string.Empty)}" +
+                $"【{CardCatalog.GetRarityLabel(_selectedCard.Kind)}】" +
                 CardCatalog.GetName(_selectedCard.Kind),
                 34,
                 TextAnchor.MiddleLeft,
                 UiFactory.Accent);
 
-            DrawCardCostIcons(panel, _selectedCard.Kind);
+            DrawCardCostIcons(panel, _selectedCard);
 
             UiFactory.CreateText(
                 "CardDescription",
@@ -839,9 +855,9 @@ namespace LostPage
                 panel,
                 new Vector2(0.76f, 0.17f),
                 new Vector2(0.97f, 0.83f),
-                CardCatalog.IsSingleTargetAttack(_selectedCard.Kind)
+                CardCatalog.RequiresEnemyTarget(_selectedCard.Kind)
                     ? "選択中の敵へ使用"
-                    : _selectedCard.Kind == CardKind.AreaAttack
+                    : CardCatalog.IsAttack(_selectedCard.Kind)
                         ? "敵全体へ使用"
                     : "カードを使用",
                 UseSelectedCard,
@@ -849,11 +865,13 @@ namespace LostPage
                 27);
             useButton.interactable =
                 usable &&
-                (!CardCatalog.IsSingleTargetAttack(_selectedCard.Kind) ||
+                (!CardCatalog.RequiresEnemyTarget(_selectedCard.Kind) ||
                  IsSelectedEnemyAlive());
         }
 
-        private void DrawCardCostIcons(RectTransform panel, CardKind kind)
+        private void DrawCardCostIcons(
+            RectTransform panel,
+            CardInstance card)
         {
             UiFactory.CreateText(
                 "CostLabel",
@@ -865,7 +883,7 @@ namespace LostPage
                 TextAnchor.MiddleLeft);
 
             var iconIndex = 0;
-            foreach (var cost in CardCatalog.GetCost(kind))
+            foreach (var cost in CardCatalog.GetCost(card))
             {
                 for (var count = 0; count < cost.Value; count++)
                 {
@@ -896,42 +914,49 @@ namespace LostPage
                 root,
                 "All",
                 new Vector2(0.03f, 0.47f),
-                new Vector2(0.11f, 0.51f),
+                new Vector2(0.095f, 0.51f),
                 "全て",
                 CardFilterMode.All);
             DrawCardFilterButton(
                 root,
                 "Attack",
-                new Vector2(0.115f, 0.47f),
-                new Vector2(0.215f, 0.51f),
+                new Vector2(0.10f, 0.47f),
+                new Vector2(0.18f, 0.51f),
                 "攻撃",
                 CardFilterMode.Attack);
             DrawCardFilterButton(
                 root,
                 "Defense",
-                new Vector2(0.22f, 0.47f),
-                new Vector2(0.32f, 0.51f),
+                new Vector2(0.185f, 0.47f),
+                new Vector2(0.265f, 0.51f),
                 "防御",
                 CardFilterMode.Defense);
             DrawCardFilterButton(
                 root,
                 "Charge",
-                new Vector2(0.325f, 0.47f),
-                new Vector2(0.445f, 0.51f),
+                new Vector2(0.27f, 0.47f),
+                new Vector2(0.365f, 0.51f),
                 "チャージ",
                 CardFilterMode.Charge);
             DrawCardFilterButton(
                 root,
                 "Persistent",
-                new Vector2(0.45f, 0.47f),
-                new Vector2(0.57f, 0.51f),
+                new Vector2(0.37f, 0.47f),
+                new Vector2(0.465f, 0.51f),
                 "持続",
                 CardFilterMode.Persistent);
+            DrawCardFilterButton(
+                root,
+                "Special",
+                new Vector2(0.47f, 0.47f),
+                new Vector2(0.555f, 0.51f),
+                "特殊",
+                CardFilterMode.Special);
 
             UiFactory.CreateButton(
                 "CardSort",
                 root,
-                new Vector2(0.58f, 0.47f),
+                new Vector2(0.565f, 0.47f),
                 new Vector2(0.97f, 0.51f),
                 $"並び順：{GetCardSortModeLabel()}",
                 CycleCardSortMode,
@@ -978,17 +1003,18 @@ namespace LostPage
                 var cooldownState = card.CooldownRemaining > 0
                     ? $"（残り{card.CooldownRemaining}ターン）"
                     : string.Empty;
-                var cooldownLabel = CardCatalog.IsPersistent(card.Kind)
-                    ? "戦闘中1回"
-                    : $"CT：{CardCatalog.GetCooldown(card.Kind)}";
+                var cooldownLabel = GetCooldownLabel(card);
                 var button = UiFactory.CreateButton(
                     $"Card_{card.Id}",
                     content,
                     Vector2.zero,
                     Vector2.zero,
-                    $"#{cardIndex + 1}　{CardCatalog.GetName(card.Kind)}\n\n" +
-                    $"{CardCatalog.GetShortDescription(card.Kind)}\n" +
-                    $"コスト：{CardCatalog.GetCostText(card.Kind)}\n" +
+                    $"#{cardIndex + 1}　" +
+                    $"{(card.IsUpgraded ? "【強化済】" : string.Empty)}" +
+                    $"{CardCatalog.GetName(card.Kind)}\n" +
+                    $"【{CardCatalog.GetRarityLabel(card.Kind)}】\n" +
+                    $"{CardCatalog.GetShortDescription(card)}\n" +
+                    $"コスト：{CardCatalog.GetCostText(card)}\n" +
                     $"{cooldownLabel}{cooldownState}",
                     () =>
                     {
@@ -1092,6 +1118,9 @@ namespace LostPage
                 case CardFilterMode.Persistent:
                     return CardCatalog.GetCategory(card.Kind) ==
                            CardCategory.Persistent;
+                case CardFilterMode.Special:
+                    return CardCatalog.GetCategory(card.Kind) ==
+                           CardCategory.Special;
                 default:
                     throw new ArgumentOutOfRangeException();
             }
@@ -1262,11 +1291,36 @@ namespace LostPage
                     UiFactory.Blue));
             }
 
+            if (_battle.ReflectionStacks > 0)
+            {
+                statuses.Add((
+                    $"反射\n{_battle.ReflectionStacks}",
+                    UiFactory.Red));
+            }
+
+            if (_battle.PendingAttackExecutions > 1)
+            {
+                statuses.Add((
+                    $"次回攻撃\n{_battle.PendingAttackExecutions}回",
+                    UiFactory.Purple));
+            }
+
             if (_battle.GuardCycleStacks > 0)
             {
                 statuses.Add((
                     $"守護循環 x{_battle.GuardCycleStacks}\n" +
                     $"{_battle.CardsTowardAutoDefense}/3",
+                    UiFactory.Purple));
+            }
+
+            foreach (var persistentCard in
+                     _battle.ActivePersistentCards.Where(
+                         card =>
+                             card.Kind != CardKind.Persistent &&
+                             card.Kind != CardKind.GuardCyclePersistent))
+            {
+                statuses.Add((
+                    $"{CardCatalog.GetName(persistentCard.Kind)}\n発動中",
                     UiFactory.Purple));
             }
 
@@ -1437,12 +1491,35 @@ namespace LostPage
                 return;
             }
 
+            if (_selectedCard.Kind == CardKind.DivineStrike)
+            {
+                var modes = _battle.GetDivineStrikeModes();
+                if (modes.Count > 1)
+                {
+                    ShowDivineStrikeModeSelection(modes);
+                    return;
+                }
+
+                ResolveSelectedCard(modes.FirstOrDefault());
+                return;
+            }
+
+            ResolveSelectedCard(null);
+        }
+
+        private void ResolveSelectedCard(EtherType? divineMode)
+        {
             var usedKind = _selectedCard.Kind;
             var paidEther = ExpandEtherCounts(
-                CardCatalog.GetCost(usedKind));
+                usedKind == CardKind.DivineStrike
+                    ? _battle.Pool.Current
+                    : CardCatalog.GetCost(_selectedCard));
             try
             {
-                _message = _battle.UseCard(_selectedCard, _selectedEnemyIndex);
+                _message = _battle.UseCard(
+                    _selectedCard,
+                    _selectedEnemyIndex,
+                    divineMode);
             }
             catch (InvalidOperationException exception)
             {
@@ -1501,7 +1578,7 @@ namespace LostPage
             var frames = AttackEffectSet.GetFrames();
             if (frames.Count > 0 && attackHits.Count > 0)
             {
-                if (usedKind == CardKind.RandomBarrage)
+                if (_battle.LastAttackIsSequential)
                 {
                     foreach (var hit in attackHits)
                     {
@@ -1527,6 +1604,56 @@ namespace LostPage
 
             _isResolvingAction = false;
             FinishCardUse(usedKind);
+        }
+
+        private void ShowDivineStrikeModeSelection(
+            IReadOnlyList<EtherType> modes)
+        {
+            var overlay = CreateOverlay("DivineStrikeModeSelection");
+            var dialog = UiFactory.CreatePanel(
+                "DivineStrikeModeDialog",
+                overlay,
+                new Vector2(0.20f, 0.25f),
+                new Vector2(0.80f, 0.75f),
+                new Color32(42, 45, 59, 255));
+            UiFactory.CreateText(
+                "Title",
+                dialog,
+                new Vector2(0.08f, 0.75f),
+                new Vector2(0.92f, 0.93f),
+                "神撃の効果色を選択",
+                35,
+                TextAnchor.MiddleCenter,
+                UiFactory.Accent);
+            for (var index = 0; index < modes.Count; index++)
+            {
+                var mode = modes[index];
+                var width = 0.80f / modes.Count;
+                var left = 0.10f + width * index;
+                UiFactory.CreateButton(
+                    $"DivineMode_{mode}",
+                    dialog,
+                    new Vector2(left + 0.01f, 0.30f),
+                    new Vector2(left + width - 0.01f, 0.66f),
+                    $"{CardCatalog.GetEtherName(mode)}\n効果",
+                    () =>
+                    {
+                        Destroy(overlay.gameObject);
+                        ResolveSelectedCard(mode);
+                    },
+                    UiFactory.GetEtherColor(mode),
+                    28);
+            }
+
+            UiFactory.CreateButton(
+                "Cancel",
+                dialog,
+                new Vector2(0.35f, 0.08f),
+                new Vector2(0.65f, 0.22f),
+                "キャンセル",
+                () => Destroy(overlay.gameObject),
+                new Color32(91, 84, 79, 255),
+                24);
         }
 
         private IEnumerator PlayAttackEffect(
@@ -2043,8 +2170,8 @@ namespace LostPage
                 new Vector2(0.05f, 0.05f),
                 new Vector2(0.95f, 0.95f),
                 $"{CardCatalog.GetName(card.Kind)}\n\n" +
-                $"{CardCatalog.GetShortDescription(card.Kind)}\n" +
-                $"コスト：{CardCatalog.GetCostText(card.Kind)}",
+                $"{CardCatalog.GetShortDescription(card)}\n" +
+                $"コスト：{CardCatalog.GetCostText(card)}",
                 22);
             UpdateCardDrag(eventData);
         }
@@ -2358,7 +2485,7 @@ namespace LostPage
             {
                 if (_session.HasNextLayer)
                 {
-                    ShowBossToolReward();
+                    ShowBossCardReward();
                 }
                 else
                 {
@@ -2415,6 +2542,7 @@ namespace LostPage
                     root,
                     new Vector2(left, 0.23f),
                     new Vector2(left + 0.20f, 0.67f),
+                    $"【{CardCatalog.GetRarityLabel(kind)}】\n" +
                     $"{CardCatalog.GetName(kind)}\n\n" +
                     $"{CardCatalog.GetShortDescription(kind)}\n\n" +
                     $"コスト：{CardCatalog.GetCostText(kind)}\n" +
@@ -2454,6 +2582,19 @@ namespace LostPage
 
         private void ShowRandomEvent()
         {
+            var kind = _session.GetCurrentRandomEventKind();
+            if (kind == RandomEventKind.FreeUpgrade)
+            {
+                ShowFreeUpgradeEvent();
+                return;
+            }
+
+            if (kind == RandomEventKind.BloodUpgrade)
+            {
+                ShowBloodUpgradeEvent();
+                return;
+            }
+
             _message = _session.ResolveCurrentRandomEvent();
             if (_session.Player.Hp <= 0)
             {
@@ -2463,6 +2604,179 @@ namespace LostPage
 
             ShowMap();
             ShowMessageDialog("ランダムイベント", _message);
+        }
+
+        private void ShowFreeUpgradeEvent()
+        {
+            var root = CreateScreen("FreeUpgradeEvent");
+            DrawUpgradeEventHeader(
+                root,
+                "古い強化台",
+                "カードを最大2枚まで強化できます。1枚強化後に終了することもできます。");
+            DrawEventUpgradeableCards(
+                root,
+                card =>
+                {
+                    if (_session.TryUpgradeCardForFreeEvent(card.Id))
+                    {
+                        _message =
+                            $"{CardCatalog.GetName(card.Kind)}を強化しました。";
+                    }
+
+                    if (_session.CurrentNode.Cleared)
+                    {
+                        ShowMap();
+                    }
+                    else
+                    {
+                        ShowFreeUpgradeEvent();
+                    }
+                });
+            var finish = UiFactory.CreateButton(
+                "FinishFreeUpgrade",
+                root,
+                new Vector2(0.36f, 0.05f),
+                new Vector2(0.64f, 0.15f),
+                "ここで終了",
+                () =>
+                {
+                    _session.FinishFreeUpgradeEvent();
+                    _message = "カード強化を終了しました。";
+                    ShowMap();
+                },
+                new Color32(100, 83, 61, 255),
+                25);
+            finish.interactable =
+                _session.FreeEventUpgrades > 0;
+        }
+
+        private void ShowBloodUpgradeEvent()
+        {
+            if (_session.PendingBloodEventUpgrades > 0)
+            {
+                var root = CreateScreen("BloodUpgradeCardSelection");
+                DrawUpgradeEventHeader(
+                    root,
+                    "血の強化",
+                    $"強化するカードを選択してください。" +
+                    $"残り{_session.PendingBloodEventUpgrades}枚");
+                DrawEventUpgradeableCards(
+                    root,
+                    card =>
+                    {
+                        if (_session.TryUpgradeCardForBloodEvent(card.Id))
+                        {
+                            _message =
+                                $"{CardCatalog.GetName(card.Kind)}を強化しました。";
+                        }
+
+                        if (_session.CurrentNode.Cleared)
+                        {
+                            ShowMap();
+                        }
+                        else
+                        {
+                            ShowBloodUpgradeEvent();
+                        }
+                    });
+                return;
+            }
+
+            var selectionRoot = CreateScreen("BloodUpgradeEvent");
+            DrawUpgradeEventHeader(
+                selectionRoot,
+                "血の強化",
+                "HPを支払い、カードを強化します。HPが0以下になる選択肢は選べません。");
+            for (var count = 1; count <= 3; count++)
+            {
+                var selectedCount = count;
+                var left = 0.13f + (count - 1) * 0.27f;
+                var button = UiFactory.CreateButton(
+                    $"BloodUpgrade_{count}",
+                    selectionRoot,
+                    new Vector2(left, 0.30f),
+                    new Vector2(left + 0.20f, 0.62f),
+                    $"HP -{count * 6}\n\nカード{count}枚を強化",
+                    () =>
+                    {
+                        if (_session.StartBloodUpgradeEvent(selectedCount))
+                        {
+                            ShowBloodUpgradeEvent();
+                        }
+                    },
+                    new Color32(116, 57, 65, 255),
+                    27);
+                button.interactable =
+                    _session.CanChooseBloodUpgradeCount(count);
+            }
+        }
+
+        private static void DrawUpgradeEventHeader(
+            RectTransform root,
+            string title,
+            string description)
+        {
+            UiFactory.CreateText(
+                "Title",
+                root,
+                new Vector2(0.08f, 0.83f),
+                new Vector2(0.92f, 0.95f),
+                title,
+                43,
+                TextAnchor.MiddleCenter,
+                UiFactory.Accent);
+            UiFactory.CreateText(
+                "Description",
+                root,
+                new Vector2(0.08f, 0.73f),
+                new Vector2(0.92f, 0.83f),
+                description,
+                26);
+        }
+
+        private void DrawEventUpgradeableCards(
+            RectTransform root,
+            Action<CardInstance> onSelected)
+        {
+            var scroll = UiFactory.CreateScrollView(
+                "EventCards",
+                root,
+                new Vector2(0.05f, 0.18f),
+                new Vector2(0.95f, 0.70f),
+                true,
+                false,
+                out var content);
+            var layout = content.gameObject.AddComponent<HorizontalLayoutGroup>();
+            layout.spacing = 16;
+            layout.padding = new RectOffset(16, 16, 12, 12);
+            layout.childAlignment = TextAnchor.MiddleLeft;
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = false;
+            layout.childForceExpandHeight = true;
+            var fitter = content.gameObject.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
+            foreach (var card in _session.GetUpgradeableCards())
+            {
+                var selectedCard = card;
+                var button = UiFactory.CreateButton(
+                    $"EventUpgrade_{card.Id}",
+                    content,
+                    Vector2.zero,
+                    Vector2.zero,
+                    $"{CardCatalog.GetName(card.Kind)}\n" +
+                    $"【{CardCatalog.GetRarityLabel(card.Kind)}】\n\n" +
+                    $"現在：{CardCatalog.GetShortDescription(card)}\n\n" +
+                    $"強化後：{GetUpgradedCardDescription(card)}",
+                    () => onSelected(selectedCard),
+                    UiFactory.GetCardColor(card.Kind),
+                    21);
+                var element = button.gameObject.AddComponent<LayoutElement>();
+                element.preferredWidth = 320;
+                element.minWidth = 320;
+                element.preferredHeight = 410;
+            }
         }
 
         private void ShowRewardStage()
@@ -2568,11 +2882,13 @@ namespace LostPage
                 30,
                 TextAnchor.MiddleRight);
 
+            DrawShopCategoryTabs(dialog);
+
             var shopScroll = UiFactory.CreateScrollView(
                 "ShopCards",
                 dialog,
-                new Vector2(0.04f, 0.23f),
-                new Vector2(0.96f, 0.82f),
+                new Vector2(0.04f, 0.25f),
+                new Vector2(0.96f, 0.76f),
                 true,
                 false,
                 out var shopContent);
@@ -2590,25 +2906,31 @@ namespace LostPage
             shopFitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             shopFitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
 
-            var kinds = Enum.GetValues(typeof(CardKind))
-                .Cast<CardKind>()
-                .ToArray();
-            for (var index = 0; index < kinds.Length; index++)
+            var stocks = _session.GetCurrentShopStock(_shopCategory);
+            for (var index = 0; index < stocks.Count; index++)
             {
-                var kind = kinds[index];
+                var stock = stocks[index];
+                var kind = stock.Kind;
                 var button = UiFactory.CreateButton(
-                    $"Shop_{kind}",
+                    $"Shop_{stock.Id}_{kind}",
                     shopContent,
                     Vector2.zero,
                     Vector2.zero,
+                    $"【{CardCatalog.GetRarityLabel(kind)}】\n" +
                     $"{CardCatalog.GetName(kind)}\n\n" +
                     $"{CardCatalog.GetShortDescription(kind)}\n\n" +
                     $"{CardCatalog.GetCostText(kind)}\n" +
-                    $"{GetCooldownLabel(kind)}\n{price}G",
-                    () => ShowPurchaseConfirmation(kind),
-                    UiFactory.GetCardColor(kind),
+                    $"{GetCooldownLabel(kind)}\n" +
+                    (stock.Purchased ? "売り切れ" : $"{price}G"),
+                    () => ShowPurchaseConfirmation(stock),
+                    stock.Purchased
+                        ? UiFactory.Disabled
+                        : UiFactory.GetCardColor(kind),
                     23);
-                button.interactable = _session.Player.Gold >= price;
+                button.interactable =
+                    !stock.Purchased &&
+                    _session.Player.Gold >= price &&
+                    _session.Player.CanAddCard(kind);
                 var element = button.gameObject.AddComponent<LayoutElement>();
                 element.preferredWidth = 260;
                 element.minWidth = 260;
@@ -2618,6 +2940,24 @@ namespace LostPage
             Canvas.ForceUpdateCanvases();
             shopScroll.horizontalNormalizedPosition = _shopScrollX;
             shopScroll.onValueChanged.AddListener(value => _shopScrollX = value.x);
+
+            var upgradeButton = UiFactory.CreateButton(
+                "UpgradeCard",
+                dialog,
+                new Vector2(0.66f, 0.08f),
+                new Vector2(0.94f, 0.20f),
+                $"{GetCategoryLabel(_shopCategory)}カードを強化\n" +
+                $"{_session.ShopUpgradePrice}G",
+                ShowShopUpgradeSelection,
+                new Color32(87, 75, 118, 255),
+                22);
+            upgradeButton.interactable =
+                !_session.HasUpgradedCategoryAtCurrentShop(_shopCategory) &&
+                _session.Player.Gold >= _session.ShopUpgradePrice &&
+                _session.Player.Deck.Any(
+                    card =>
+                        CardCatalog.GetCategory(card.Kind) == _shopCategory &&
+                        CardCatalog.CanUpgrade(card));
 
             UiFactory.CreateButton(
                 "Leave",
@@ -2647,8 +2987,128 @@ namespace LostPage
             }
         }
 
-        private void ShowPurchaseConfirmation(CardKind kind)
+        private void DrawShopCategoryTabs(RectTransform dialog)
         {
+            var categories = new[]
+            {
+                CardCategory.Attack,
+                CardCategory.Defense,
+                CardCategory.Charge,
+                CardCategory.Persistent
+            };
+            for (var index = 0; index < categories.Length; index++)
+            {
+                var category = categories[index];
+                var left = 0.05f + index * 0.225f;
+                UiFactory.CreateButton(
+                    $"ShopTab_{category}",
+                    dialog,
+                    new Vector2(left, 0.78f),
+                    new Vector2(left + 0.20f, 0.85f),
+                    GetCategoryLabel(category),
+                    () =>
+                    {
+                        _shopCategory = category;
+                        _shopScrollX = 0f;
+                        ShowShop();
+                    },
+                    _shopCategory == category
+                        ? UiFactory.Green
+                        : new Color32(72, 81, 104, 255),
+                    22);
+            }
+        }
+
+        private void ShowShopUpgradeSelection()
+        {
+            var overlay = CreateOverlay("ShopUpgradeSelection");
+            var dialog = UiFactory.CreatePanel(
+                "ShopUpgradeDialog",
+                overlay,
+                new Vector2(0.12f, 0.12f),
+                new Vector2(0.88f, 0.88f),
+                new Color32(42, 45, 59, 255));
+            UiFactory.CreateText(
+                "Title",
+                dialog,
+                new Vector2(0.06f, 0.85f),
+                new Vector2(0.94f, 0.97f),
+                $"{GetCategoryLabel(_shopCategory)}カード強化 " +
+                $"({_session.ShopUpgradePrice}G)",
+                34,
+                TextAnchor.MiddleCenter,
+                UiFactory.Accent);
+            var scroll = UiFactory.CreateScrollView(
+                "UpgradeableCards",
+                dialog,
+                new Vector2(0.05f, 0.19f),
+                new Vector2(0.95f, 0.82f),
+                true,
+                false,
+                out var content);
+            var layout = content.gameObject.AddComponent<HorizontalLayoutGroup>();
+            layout.spacing = 16;
+            layout.padding = new RectOffset(16, 16, 12, 12);
+            layout.childAlignment = TextAnchor.MiddleLeft;
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = false;
+            layout.childForceExpandHeight = true;
+            var fitter = content.gameObject.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
+
+            var cards = _session.Player.Deck
+                .Where(
+                    card =>
+                        CardCatalog.GetCategory(card.Kind) == _shopCategory &&
+                        CardCatalog.CanUpgrade(card))
+                .ToList();
+            foreach (var card in cards)
+            {
+                var button = UiFactory.CreateButton(
+                    $"Upgrade_{card.Id}",
+                    content,
+                    Vector2.zero,
+                    Vector2.zero,
+                    $"{CardCatalog.GetName(card.Kind)}\n" +
+                    $"【{CardCatalog.GetRarityLabel(card.Kind)}】\n\n" +
+                    $"現在：{CardCatalog.GetShortDescription(card)}\n\n" +
+                    $"強化後：{GetUpgradedCardDescription(card)}",
+                    () =>
+                    {
+                        if (_session.TryUpgradeCardAtCurrentShop(card.Id))
+                        {
+                            _message =
+                                $"{CardCatalog.GetName(card.Kind)}を強化しました。";
+                        }
+
+                        ShowShop();
+                    },
+                    UiFactory.GetCardColor(card.Kind),
+                    21);
+                button.interactable =
+                    _session.CanUpgradeCardAtCurrentShop(card);
+                var element = button.gameObject.AddComponent<LayoutElement>();
+                element.preferredWidth = 320;
+                element.minWidth = 320;
+                element.preferredHeight = 430;
+            }
+
+            UiFactory.CreateButton(
+                "Close",
+                dialog,
+                new Vector2(0.35f, 0.04f),
+                new Vector2(0.65f, 0.14f),
+                "戻る",
+                () => Destroy(overlay.gameObject),
+                new Color32(91, 84, 79, 255),
+                24);
+        }
+
+        private void ShowPurchaseConfirmation(ShopCardStock stock)
+        {
+            var kind = stock.Kind;
             var price = _session.ShopCardPrice;
             var goldBefore = _session.Player.Gold;
             var overlay = CreateOverlay("PurchaseConfirmation");
@@ -2688,7 +3148,7 @@ namespace LostPage
                 "購入する",
                 () =>
                 {
-                    if (_session.TryBuyCard(kind))
+                    if (_session.TryBuyShopCard(stock.Id))
                     {
                         _message =
                             $"{CardCatalog.GetName(kind)}を{price}Gで購入しました。" +
@@ -2712,6 +3172,57 @@ namespace LostPage
                 () => Destroy(overlay.gameObject),
                 new Color32(91, 84, 79, 255),
                 27);
+        }
+
+        private void ShowBossCardReward()
+        {
+            var choices = _session.CreateBossCardRewardChoices();
+            if (choices.Count == 0)
+            {
+                ShowBossToolReward();
+                return;
+            }
+
+            var root = CreateScreen("BossCardReward");
+            UiFactory.CreateText(
+                "Title",
+                root,
+                new Vector2(0.08f, 0.80f),
+                new Vector2(0.92f, 0.94f),
+                "ボスカード報酬",
+                46,
+                TextAnchor.MiddleCenter,
+                UiFactory.Accent);
+            UiFactory.CreateText(
+                "Prompt",
+                root,
+                new Vector2(0.08f, 0.70f),
+                new Vector2(0.92f, 0.80f),
+                "ボスカードを1枚選んでください",
+                29);
+            for (var index = 0; index < choices.Count; index++)
+            {
+                var kind = choices[index];
+                var left = 0.13f + index * 0.27f;
+                UiFactory.CreateButton(
+                    $"BossCard_{kind}",
+                    root,
+                    new Vector2(left, 0.23f),
+                    new Vector2(left + 0.20f, 0.67f),
+                    $"【ボス】\n{CardCatalog.GetName(kind)}\n\n" +
+                    $"{CardCatalog.GetShortDescription(kind)}\n\n" +
+                    $"コスト：{CardCatalog.GetCostText(kind)}\n" +
+                    GetCooldownLabel(kind),
+                    () =>
+                    {
+                        _session.Player.AddCard(kind);
+                        _message =
+                            $"{CardCatalog.GetName(kind)}を獲得しました。";
+                        ShowBossToolReward();
+                    },
+                    UiFactory.GetCardColor(kind),
+                    23);
+            }
         }
 
         private void ShowBossToolReward()
@@ -3209,6 +3720,27 @@ namespace LostPage
 
         private string GetDetailedCardText(CardInstance card, bool usable)
         {
+            if (card != null)
+            {
+                var state = usable
+                    ? "使用可能"
+                    : CardCatalog.IsPersistent(card.Kind) &&
+                      card.PersistentActivated
+                        ? "使用不可：発動済み"
+                        : CardCatalog.IsOncePerBattle(card) &&
+                          card.UsedThisBattle
+                            ? "使用不可：戦闘中1回を使用済み"
+                            : card.CooldownRemaining > 0
+                                ? $"使用不可：残り{card.CooldownRemaining}ターン"
+                                : "使用不可：必要なエーテルが不足";
+                var genericDragTarget = CardCatalog.IsAttack(card.Kind)
+                    ? "ドラッグ先：対象の敵"
+                    : "ドラッグ先：中央の説明欄";
+                return
+                    $"効果：{CardCatalog.GetShortDescription(card)}\n" +
+                    $"{GetCooldownLabel(card)}　{state}　{genericDragTarget}";
+            }
+
             string effect;
             switch (card.Kind)
             {
@@ -3316,9 +3848,59 @@ namespace LostPage
 
         private static string GetCooldownLabel(CardKind kind)
         {
-            return CardCatalog.IsPersistent(kind)
+            return CardCatalog.IsPersistent(kind) ||
+                   CardCatalog.GetCooldown(kind) == 0
                 ? "使用回数：戦闘中1回"
                 : $"クールタイム：{CardCatalog.GetCooldown(kind)}";
+        }
+
+        private static string GetCooldownLabel(CardInstance card)
+        {
+            if (CardCatalog.IsPersistent(card.Kind))
+            {
+                return "使用回数：戦闘中1回";
+            }
+
+            if (CardCatalog.IsOncePerBattle(card))
+            {
+                return "使用回数：戦闘中1回";
+            }
+
+            return $"クールタイム：{CardCatalog.GetCooldown(card)}";
+        }
+
+        private static string GetUpgradedCardDescription(CardInstance card)
+        {
+            var upgraded = new CardInstance(-1, card.Kind)
+            {
+                IsUpgraded = true
+            };
+            return
+                $"{CardCatalog.GetShortDescription(upgraded)}\n" +
+                $"コスト：{CardCatalog.GetCostText(upgraded)}\n" +
+                GetCooldownLabel(upgraded);
+        }
+
+        private static string GetCategoryLabel(CardCategory category)
+        {
+            switch (category)
+            {
+                case CardCategory.Attack:
+                    return "攻撃";
+                case CardCategory.Defense:
+                    return "防御";
+                case CardCategory.Charge:
+                    return "チャージ";
+                case CardCategory.Persistent:
+                    return "持続";
+                case CardCategory.Special:
+                    return "特殊";
+                default:
+                    throw new ArgumentOutOfRangeException(
+                        nameof(category),
+                        category,
+                        null);
+            }
         }
 
         private bool IsSelectedEnemyAlive()
@@ -3346,14 +3928,39 @@ namespace LostPage
             switch (enemy.NextAction)
             {
                 case EnemyActionKind.Attack:
-                    return $"攻撃 {enemy.Attack}";
+                    return
+                        $"攻撃 {Math.Max(0, enemy.Attack - enemy.Weakness)}";
                 case EnemyActionKind.Defense:
-                    return $"防御 {enemy.Defense}";
+                    return
+                        $"防御 {Math.Max(0, enemy.Defense - enemy.Weakness)}";
                 case EnemyActionKind.Weaken:
                     return "弱体 3";
                 default:
                     throw new ArgumentOutOfRangeException();
             }
+        }
+
+        private static string GetEnemyStatusText(EnemyState enemy)
+        {
+            var statuses = new List<string>();
+            if (enemy.Fire > 0)
+            {
+                statuses.Add($"炎{enemy.Fire}");
+            }
+
+            if (enemy.Bleed > 0)
+            {
+                statuses.Add($"出血{enemy.Bleed}");
+            }
+
+            if (enemy.Weakness > 0)
+            {
+                statuses.Add($"弱化{enemy.Weakness}");
+            }
+
+            return statuses.Count == 0
+                ? string.Empty
+                : $"\n状態：{string.Join("・", statuses)}";
         }
 
         private static string GetStageIcon(StageKind kind)
@@ -3485,6 +4092,117 @@ namespace LostPage
             return GetOwnedToolSummary();
         }
 
+        private void ShowOwnedCardsOverlay()
+        {
+            var overlay = CreateOverlay("OwnedCardsOverlay");
+            var dialog = UiFactory.CreatePanel(
+                "OwnedCardsDialog",
+                overlay,
+                new Vector2(0.08f, 0.08f),
+                new Vector2(0.92f, 0.92f),
+                new Color32(42, 45, 59, 255));
+            UiFactory.CreateText(
+                "Title",
+                dialog,
+                new Vector2(0.05f, 0.88f),
+                new Vector2(0.95f, 0.98f),
+                "所持カード一覧",
+                38,
+                TextAnchor.MiddleCenter,
+                UiFactory.Accent);
+            var categories = new[]
+            {
+                CardCategory.Attack,
+                CardCategory.Defense,
+                CardCategory.Charge,
+                CardCategory.Persistent,
+                CardCategory.Special
+            };
+            for (var index = 0; index < categories.Length; index++)
+            {
+                var category = categories[index];
+                var left = 0.04f + index * 0.19f;
+                UiFactory.CreateButton(
+                    $"OwnedCardTab_{category}",
+                    dialog,
+                    new Vector2(left, 0.80f),
+                    new Vector2(left + 0.17f, 0.87f),
+                    GetCategoryLabel(category),
+                    () =>
+                    {
+                        _ownedCardCategory = category;
+                        Destroy(overlay.gameObject);
+                        ShowOwnedCardsOverlay();
+                    },
+                    _ownedCardCategory == category
+                        ? UiFactory.Green
+                        : new Color32(72, 81, 104, 255),
+                    21);
+            }
+
+            var scroll = UiFactory.CreateScrollView(
+                "OwnedCards",
+                dialog,
+                new Vector2(0.04f, 0.17f),
+                new Vector2(0.96f, 0.78f),
+                true,
+                false,
+                out var content);
+            var layout = content.gameObject.AddComponent<HorizontalLayoutGroup>();
+            layout.spacing = 16;
+            layout.padding = new RectOffset(16, 16, 12, 12);
+            layout.childAlignment = TextAnchor.MiddleLeft;
+            layout.childControlWidth = true;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = false;
+            layout.childForceExpandHeight = true;
+            var fitter = content.gameObject.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
+            fitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
+            var cards = _session.Player.Deck
+                .Where(
+                    card =>
+                        CardCatalog.GetCategory(card.Kind) ==
+                        _ownedCardCategory)
+                .OrderBy(card => card.Id)
+                .ToList();
+            foreach (var card in cards)
+            {
+                var panel = UiFactory.CreatePanel(
+                    $"OwnedCard_{card.Id}",
+                    content,
+                    Vector2.zero,
+                    Vector2.zero,
+                    UiFactory.GetCardColor(card.Kind));
+                var element = panel.gameObject.AddComponent<LayoutElement>();
+                element.preferredWidth = 310;
+                element.minWidth = 310;
+                element.preferredHeight = 430;
+                UiFactory.CreateText(
+                    "Text",
+                    panel,
+                    new Vector2(0.05f, 0.05f),
+                    new Vector2(0.95f, 0.95f),
+                    $"{(card.IsUpgraded ? "【強化済】" : string.Empty)}" +
+                    $"【{CardCatalog.GetRarityLabel(card.Kind)}】\n" +
+                    $"{CardCatalog.GetName(card.Kind)}\n\n" +
+                    $"{CardCatalog.GetShortDescription(card)}\n\n" +
+                    $"コスト：{CardCatalog.GetCostText(card)}\n" +
+                    GetCooldownLabel(card),
+                    22);
+            }
+
+            UiFactory.CreateButton(
+                "CloseOwnedCards",
+                dialog,
+                new Vector2(0.36f, 0.04f),
+                new Vector2(0.64f, 0.13f),
+                "閉じる",
+                () => Destroy(overlay.gameObject),
+                new Color32(91, 84, 79, 255),
+                25);
+        }
+
         private void ShowOwnedToolsOverlay()
         {
             var overlay = CreateOverlay("OwnedToolsOverlay");
@@ -3559,6 +4277,8 @@ namespace LostPage
                     return new Color32(116, 88, 132, 255);
                 case CarryToolRarity.Boss:
                     return new Color32(137, 103, 52, 255);
+                case CarryToolRarity.Special:
+                    return new Color32(176, 142, 55, 255);
                 default:
                     throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
             }
@@ -3683,6 +4403,7 @@ namespace LostPage
                 _session.Player.AddCard(CardKind.StrongDefense);
                 _session.Player.AddCard(CardKind.Resonance);
                 _session.Player.AddCard(CardKind.Persistent);
+                _session.Player.AddCard(CardKind.DivineStrike);
                 TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
                 var filterModes = new[]
@@ -3690,14 +4411,16 @@ namespace LostPage
                     CardFilterMode.Attack,
                     CardFilterMode.Defense,
                     CardFilterMode.Charge,
-                    CardFilterMode.Persistent
+                    CardFilterMode.Persistent,
+                    CardFilterMode.Special
                 };
                 var filterCategories = new[]
                 {
                     CardCategory.Attack,
                     CardCategory.Defense,
                     CardCategory.Charge,
-                    CardCategory.Persistent
+                    CardCategory.Persistent,
+                    CardCategory.Special
                 };
                 for (var index = 0; index < filterModes.Length; index++)
                 {

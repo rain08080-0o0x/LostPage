@@ -41,7 +41,7 @@ namespace LostPage.Editor
 
             PlayerSettings.companyName = "LostPagePrototype";
             PlayerSettings.productName = "Lost Page";
-            PlayerSettings.bundleVersion = "1.1.6";
+            PlayerSettings.bundleVersion = "1.2.1";
             PlayerSettings.defaultScreenWidth = 1920;
             PlayerSettings.defaultScreenHeight = 1080;
             PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
@@ -56,7 +56,7 @@ namespace LostPage.Editor
                 "com.lostpage.prototype");
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
             PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevelAuto;
-            PlayerSettings.Android.bundleVersionCode = 6;
+            PlayerSettings.Android.bundleVersionCode = 7;
 
             AssetDatabase.SaveAssets();
             Debug.Log("LOSTPAGE_SETUP_OK");
@@ -1015,9 +1015,13 @@ namespace LostPage.Editor
                 },
                 new System.Random(22));
             Require(
-                starBattle.PendingCharge == 18 &&
-                starBattle.Pool.CurrentTotal == 6,
-                "星系は最上位のみ発動しエネルギーコアで取得数+1");
+                starBattle.PendingCharge == 50 &&
+                starBattle.Pool.CurrentTotal == 6 &&
+                starPlayer.GetToolCount(CarryToolKind.Myojo) == 1 &&
+                !starPlayer.HasTool(CarryToolKind.StarFragment) &&
+                !starPlayer.HasTool(CarryToolKind.StarMass) &&
+                !starPlayer.HasTool(CarryToolKind.StarOrb),
+                "星3種は明星へ変換され、明星とエネルギーコアが発動");
 
             var beltPlayer = new PlayerState();
             beltPlayer.Deck.Clear();
@@ -1063,8 +1067,8 @@ namespace LostPage.Editor
             judgmentBattle.UseCard(judgmentCard, 0);
             Require(
                 judgmentPlayer.Shield == 7 &&
-                judgmentTarget.Hp == 29,
-                "守護者の裁きは総シールド20%を切り捨てて与える");
+                judgmentTarget.Hp == 28,
+                "守護者の裁きは総シールド20%を切り上げて与える");
 
             var daggerPlayer = new PlayerState();
             daggerPlayer.Deck.Clear();
@@ -1139,8 +1143,8 @@ namespace LostPage.Editor
             heartBattle.UseCard(heartAttack, 0);
             Require(
                 heartTarget.Hp == 22 &&
-                heartBattle.PendingCharge == 1,
-                "ヴォーパルハートは全チャージを適用して半分を残す");
+                heartBattle.PendingCharge == 2,
+                "ヴォーパルハートは全チャージを適用し、半分を切り上げて残す");
 
             var currentTokens = attackBattle.Pool.GetCurrentTokens();
             Require(currentTokens.Count == 3, "攻撃後の手番エーテル");
@@ -1168,11 +1172,17 @@ namespace LostPage.Editor
             Require(choices.Count == 3, "カード報酬の選択肢数");
             Require(choices.Distinct().Count() == 3, "カード報酬は重複なし");
             Require(
-                Enum.GetValues(typeof(CardKind)).Length == 18,
+                Enum.GetValues(typeof(CardKind)).Length == 55 &&
+                CardCatalog.AllKinds.Count() == 55,
                 "報酬・ショップのカード候補数");
             var rewardCandidates = new HashSet<CardKind>();
+            var rewardCandidateCount = CardCatalog.AllKinds.Count(
+                kind =>
+                    CardCatalog.GetRarity(kind) == CardRarity.Normal ||
+                    CardCatalog.GetRarity(kind) == CardRarity.Rare);
             for (var seed = 1;
-                 seed <= 200 && rewardCandidates.Count < 18;
+                 seed <= 1000 &&
+                 rewardCandidates.Count < rewardCandidateCount;
                  seed++)
             {
                 foreach (var kind in new RunSession(seed).CreateCardRewardChoices())
@@ -1182,13 +1192,18 @@ namespace LostPage.Editor
             }
 
             Require(
-                Enum.GetValues(typeof(CardKind))
-                    .Cast<CardKind>()
+                CardCatalog.AllKinds
+                    .Where(
+                        kind =>
+                            CardCatalog.GetRarity(kind) ==
+                            CardRarity.Normal ||
+                            CardCatalog.GetRarity(kind) ==
+                            CardRarity.Rare)
                     .All(rewardCandidates.Contains),
-                "追加カードを含む報酬抽選");
+                "通常・レアカードを含む報酬抽選");
 
             Require(
-                Enum.GetValues(typeof(CarryToolKind)).Length == 17,
+                Enum.GetValues(typeof(CarryToolKind)).Length == 18,
                 "持ち込み道具の総数");
             var toolSession = new RunSession(31415);
             var startingToolChoices =
@@ -1273,27 +1288,39 @@ namespace LostPage.Editor
 
             var eventOutcomes = new HashSet<int>();
             for (var seed = 1;
-                 seed <= 100 && eventOutcomes.Count < 3;
-                 seed++)
+                  seed <= 200 && eventOutcomes.Count < 5;
+                  seed++)
             {
                 var eventSession = new RunSession(seed);
                 eventSession.Player.Hp = 50;
                 MoveToStage(eventSession, StageKind.RandomEvent);
-                eventSession.ResolveCurrentRandomEvent();
-                if (eventSession.Player.Gold == 15 &&
-                    eventSession.Player.Hp == 50)
+                var eventKind =
+                    eventSession.GetCurrentRandomEventKind();
+                if (eventKind == RandomEventKind.FreeUpgrade)
                 {
-                    eventOutcomes.Add(0);
+                    var card =
+                        eventSession.GetUpgradeableCards().First();
+                    Require(
+                        eventSession.TryUpgradeCardForFreeEvent(card.Id),
+                        "無料強化イベントのカード選択");
+                    eventSession.FinishFreeUpgradeEvent();
+                    eventOutcomes.Add(3);
                 }
-                else if (eventSession.Player.Gold == 0 &&
-                         eventSession.Player.Hp == 70)
+                else if (eventKind == RandomEventKind.BloodUpgrade)
                 {
-                    eventOutcomes.Add(1);
+                    var card =
+                        eventSession.GetUpgradeableCards().First();
+                    Require(
+                        eventSession.StartBloodUpgradeEvent(1) &&
+                        eventSession.TryUpgradeCardForBloodEvent(card.Id) &&
+                        eventSession.Player.Hp == 44,
+                        "HP消費強化イベント");
+                    eventOutcomes.Add(4);
                 }
-                else if (eventSession.Player.Gold == 25 &&
-                         eventSession.Player.Hp == 40)
+                else
                 {
-                    eventOutcomes.Add(2);
+                    eventSession.ResolveCurrentRandomEvent();
+                    eventOutcomes.Add((int)eventKind);
                 }
 
                 Require(
@@ -1301,7 +1328,7 @@ namespace LostPage.Editor
                     "ランダムイベントの完了状態");
             }
 
-            Require(eventOutcomes.Count == 3, "ランダムイベント3種類");
+            Require(eventOutcomes.Count == 5, "ランダムイベント5種類");
 
             var stageRewardSession = new RunSession(101);
             MoveToStage(stageRewardSession, StageKind.Reward);
@@ -1610,7 +1637,410 @@ namespace LostPage.Editor
                 }
             }
 
+            ValidateCardExpansion();
             Debug.Log("LOSTPAGE_VALIDATION_OK");
+        }
+
+        private static void ValidateCardExpansion()
+        {
+            Require(
+                CardCatalog.AllKinds.Count() == 55 &&
+                CardCatalog.AllKinds.All(
+                    kind =>
+                        !string.IsNullOrWhiteSpace(
+                            CardCatalog.GetName(kind)) &&
+                        !string.IsNullOrWhiteSpace(
+                            CardCatalog.GetShortDescription(kind))),
+                "追加カードを含む全55種の定義");
+            var expectedRare = new[]
+            {
+                CardKind.GrowthAttack,
+                CardKind.RandomBarrage,
+                CardKind.PiercingAreaAttack,
+                CardKind.MirrorShield,
+                CardKind.Resonance,
+                CardKind.EtherConversion,
+                CardKind.GuardCyclePersistent
+            };
+            Require(
+                expectedRare.All(
+                    kind =>
+                        CardCatalog.GetRarity(kind) == CardRarity.Rare) &&
+                CardCatalog.GetRarity(CardKind.RedPulseAttack) ==
+                    CardRarity.Boss &&
+                CardCatalog.GetRarity(CardKind.DivineStrike) ==
+                    CardRarity.Special,
+                "既存カードのレア度設定");
+
+            var upgradedAttack = new CardInstance(9000, CardKind.Attack)
+            {
+                IsUpgraded = true
+            };
+            Require(
+                CardCatalog.GetCost(upgradedAttack)[EtherType.Red] == 1 &&
+                CardCatalog.GetCooldown(upgradedAttack) == 1 &&
+                CardCatalog.GetShortDescription(upgradedAttack)
+                    .Contains("10ダメージ"),
+                "カード個体の強化後定義");
+
+            var persistentOwner = new PlayerState();
+            persistentOwner.Deck.Clear();
+            persistentOwner.AddCard(CardKind.AdditionalDefense);
+            Require(
+                !persistentOwner.CanAddCard(CardKind.AdditionalDefense) &&
+                persistentOwner.CanAddCard(CardKind.DefenseSupport),
+                "同種持続カードの複数所持禁止");
+
+            var specialOwner = new PlayerState();
+            specialOwner.AddTool(CarryToolKind.SmallBag);
+            specialOwner.AddTool(CarryToolKind.BigBag);
+            specialOwner.AddTool(CarryToolKind.BigBag);
+            specialOwner.AddTool(CarryToolKind.EnergyCore);
+            Require(
+                specialOwner.Deck.Count(
+                    card => card.Kind == CardKind.DivineStrike) == 1,
+                "鞄とエネルギーコアによる神撃の自動入手");
+            for (var set = 0; set < 2; set++)
+            {
+                specialOwner.AddTool(CarryToolKind.StarFragment);
+                specialOwner.AddTool(CarryToolKind.StarMass);
+                specialOwner.AddTool(CarryToolKind.StarOrb);
+            }
+
+            Require(
+                specialOwner.GetToolCount(CarryToolKind.Myojo) == 2 &&
+                specialOwner.CanAddTool(CarryToolKind.StarFragment),
+                "明星の再入手と星道具の再取得");
+            specialOwner.Deck.RemoveAll(
+                card => card.Kind != CardKind.DivineStrike);
+            var myojoBattle = new BattleModel(
+                specialOwner,
+                new[]
+                {
+                    new EnemyState(
+                        "明星検証用",
+                        100,
+                        0,
+                        0,
+                        EnemyActionKind.Attack)
+                },
+                new System.Random(600));
+            Require(
+                myojoBattle.PendingCharge == 100,
+                "明星2個で自ターン開始時チャージ+100");
+
+            var flamePlayer = new PlayerState();
+            flamePlayer.Deck.Clear();
+            var heatstroke =
+                flamePlayer.AddCard(CardKind.Heatstroke);
+            var flameEnemy = new EnemyState(
+                "炎検証用",
+                100,
+                0,
+                0,
+                EnemyActionKind.Attack);
+            var flameBattle = new BattleModel(
+                flamePlayer,
+                new[] { flameEnemy },
+                new System.Random(601));
+            SetCurrentEther(
+                flameBattle.Pool,
+                (EtherType.Red, 2),
+                (EtherType.Yellow, 1));
+            flameBattle.UseCard(heatstroke, 0);
+            Require(
+                flameEnemy.Hp == 90 &&
+                flameEnemy.Fire == 0 &&
+                flameBattle.LastAttackHits.Count == 4,
+                "熱射病は炎4を4・3・2・1で連続発動");
+
+            var fireTurnPlayer = new PlayerState();
+            fireTurnPlayer.Deck.Clear();
+            var fireTurnEnemy = new EnemyState(
+                "炎行動順検証用",
+                3,
+                20,
+                0,
+                EnemyActionKind.Attack)
+            {
+                Fire = 4
+            };
+            var fireTurnBattle = new BattleModel(
+                fireTurnPlayer,
+                new[] { fireTurnEnemy },
+                new System.Random(602));
+            fireTurnBattle.EndPlayerTurn(Array.Empty<EtherType>());
+            Require(
+                !fireTurnEnemy.IsAlive &&
+                fireTurnBattle.Player.Hp == 100 &&
+                fireTurnBattle.Phase == BattlePhase.Victory,
+                "炎で敵が行動直前に倒れた場合は行動しない");
+
+            var bleedPlayer = new PlayerState();
+            bleedPlayer.Deck.Clear();
+            var surging =
+                bleedPlayer.AddCard(CardKind.SurgingFlame);
+            var bleedEnemy = new EnemyState(
+                "出血検証用",
+                100,
+                0,
+                0,
+                EnemyActionKind.Attack)
+            {
+                Shield = 100
+            };
+            var bleedBattle = new BattleModel(
+                bleedPlayer,
+                new[] { bleedEnemy },
+                new System.Random(603));
+            bleedEnemy.Bleed = 3;
+            SetCurrentEther(
+                bleedBattle.Pool,
+                (EtherType.Red, 2));
+            bleedBattle.UseCard(surging, 0);
+            Require(
+                bleedEnemy.Hp == 100 &&
+                bleedEnemy.Shield == 84 &&
+                bleedBattle.LastAttackHits.Count == 2,
+                "出血はシールドで防がれた複数ヒットでもヒットごとに発動" +
+                $"（HP={bleedEnemy.Hp}, 盾={bleedEnemy.Shield}, " +
+                $"hit={bleedBattle.LastAttackHits.Count}）");
+
+            var defeatedTargetPlayer = new PlayerState();
+            defeatedTargetPlayer.Deck.Clear();
+            var defeatedTargetSurging =
+                defeatedTargetPlayer.AddCard(CardKind.SurgingFlame);
+            var defeatedTarget = new EnemyState(
+                "途中撃破検証用",
+                5,
+                0,
+                0,
+                EnemyActionKind.Attack);
+            var survivingTarget = new EnemyState(
+                "生存検証用",
+                20,
+                0,
+                0,
+                EnemyActionKind.Attack);
+            var defeatedTargetBattle = new BattleModel(
+                defeatedTargetPlayer,
+                new[] { defeatedTarget, survivingTarget },
+                new System.Random(611));
+            SetCurrentEther(
+                defeatedTargetBattle.Pool,
+                (EtherType.Red, 2));
+            defeatedTargetBattle.UseCard(defeatedTargetSurging, 0);
+            Require(
+                !defeatedTarget.IsAlive &&
+                survivingTarget.Hp == 20 &&
+                defeatedTargetBattle.LastAttackHits.Count == 1,
+                "複数ヒット途中で対象を倒しても残り処理で例外にならない");
+
+            var crimsonPlayer = new PlayerState();
+            crimsonPlayer.Deck.Clear();
+            var crimson =
+                crimsonPlayer.AddCard(CardKind.CrimsonMoon);
+            var explosion =
+                crimsonPlayer.AddCard(CardKind.ExplosionFlame);
+            var crimsonEnemy = new EnemyState(
+                "赤い紅い月検証用",
+                50,
+                0,
+                0,
+                EnemyActionKind.Attack)
+            {
+                Fire = 3
+            };
+            var crimsonBattle = new BattleModel(
+                crimsonPlayer,
+                new[] { crimsonEnemy },
+                new System.Random(612));
+            SetCurrentEther(
+                crimsonBattle.Pool,
+                (EtherType.Red, 5),
+                (EtherType.Purple, 1));
+            crimsonBattle.UseCard(crimson, 0);
+            crimsonBattle.UseCard(explosion, 0);
+            Require(
+                crimsonEnemy.Fire == 6 &&
+                crimsonEnemy.Bleed == 2,
+                "赤い紅い月は直接ダメージのない攻撃カードの対象にも出血付与");
+
+            var reflectionPlayer = new PlayerState();
+            reflectionPlayer.Deck.Clear();
+            var spiked =
+                reflectionPlayer.AddCard(CardKind.SpikedShield);
+            var reflectionEnemy = new EnemyState(
+                "反射検証用",
+                50,
+                1,
+                0,
+                EnemyActionKind.Attack);
+            var reflectionBattle = new BattleModel(
+                reflectionPlayer,
+                new[] { reflectionEnemy },
+                new System.Random(604));
+            SetCurrentEther(
+                reflectionBattle.Pool,
+                (EtherType.Red, 1),
+                (EtherType.Blue, 2));
+            reflectionBattle.UseCard(spiked, 0);
+            reflectionEnemy.Shield = 1;
+            reflectionBattle.EndPlayerTurn(Array.Empty<EtherType>());
+            Require(
+                reflectionEnemy.Hp == 49 &&
+                reflectionBattle.ReflectionStacks == 1,
+                "反射は攻撃を防いでも発動し、敵シールドで防御され、" +
+                "次の自ターン開始時に1減少");
+
+            var duplicatePlayer = new PlayerState();
+            duplicatePlayer.Deck.Clear();
+            var duplicate =
+                duplicatePlayer.AddCard(CardKind.DuplicateAttack);
+            var duplicatedAttack =
+                duplicatePlayer.AddCard(CardKind.Attack);
+            var duplicateEnemy = new EnemyState(
+                "複製検証用",
+                100,
+                0,
+                0,
+                EnemyActionKind.Attack);
+            var duplicateBattle = new BattleModel(
+                duplicatePlayer,
+                new[] { duplicateEnemy },
+                new System.Random(605));
+            SetCurrentEther(
+                duplicateBattle.Pool,
+                (EtherType.Red, 3),
+                (EtherType.Yellow, 2));
+            duplicateBattle.UseCard(duplicate, 0);
+            duplicateBattle.UseCard(duplicatedAttack, 0);
+            Require(
+                duplicateEnemy.Hp == 90 &&
+                duplicateBattle.LastAttackHits.Count == 2,
+                "複製攻撃は次の攻撃効果を合計2回実行");
+
+            var additionalDefensePlayer = new PlayerState();
+            additionalDefensePlayer.Deck.Clear();
+            var additionalDefense =
+                additionalDefensePlayer.AddCard(
+                    CardKind.AdditionalDefense);
+            var autoDefense =
+                additionalDefensePlayer.AddCard(CardKind.AutoDefense);
+            additionalDefensePlayer.AddTool(
+                CarryToolKind.GuardianJudgment);
+            var additionalDefenseEnemy = new EnemyState(
+                "追加防御検証用",
+                100,
+                0,
+                0,
+                EnemyActionKind.Attack);
+            var additionalDefenseBattle = new BattleModel(
+                additionalDefensePlayer,
+                new[] { additionalDefenseEnemy },
+                new System.Random(606));
+            SetCurrentEther(
+                additionalDefenseBattle.Pool,
+                (EtherType.Blue, 4),
+                (EtherType.Purple, 1));
+            additionalDefenseBattle.UseCard(additionalDefense, 0);
+            additionalDefenseBattle.UseCard(autoDefense, 0);
+            Require(
+                additionalDefenseBattle.AutoDefenseStacks == 3 &&
+                additionalDefensePlayer.Shield == 3 &&
+                additionalDefenseEnemy.Hp == 99,
+                "追加防御は自動防御を減らさず同量のシールドを獲得し、" +
+                "守護者の裁きは20%を切り上げる");
+
+            var divinePlayer = new PlayerState();
+            divinePlayer.Deck.Clear();
+            var divine =
+                divinePlayer.AddCard(CardKind.DivineStrike);
+            var divineEnemy = new EnemyState(
+                "神撃検証用",
+                100,
+                0,
+                0,
+                EnemyActionKind.Attack);
+            var divineBattle = new BattleModel(
+                divinePlayer,
+                new[] { divineEnemy },
+                new System.Random(607));
+            SetCurrentEther(
+                divineBattle.Pool,
+                (EtherType.Red, 2),
+                (EtherType.Yellow, 2),
+                (EtherType.Purple, 1));
+            Require(
+                divineBattle.GetDivineStrikeModes().SequenceEqual(
+                    new[] { EtherType.Red, EtherType.Yellow }),
+                "神撃の最多色同数選択");
+            divineBattle.UseCard(divine, 0, EtherType.Red);
+            Require(
+                divineEnemy.Hp == 64 &&
+                divineBattle.Pool.CurrentTotal == 0 &&
+                divineBattle.Pool.Spent.Values.Sum() == 5 &&
+                divine.CooldownRemaining == 8,
+                "神撃・赤の式、複数回攻撃、手番全消費");
+
+            var upgradedPoolPlayer = new PlayerState();
+            upgradedPoolPlayer.Deck.Clear();
+            var upgradedPoolAttack =
+                upgradedPoolPlayer.AddCard(CardKind.Attack);
+            upgradedPoolAttack.IsUpgraded = true;
+            var upgradedPool = new EtherPool(
+                upgradedPoolPlayer.Deck,
+                new System.Random(608));
+            Require(
+                upgradedPool.GetTotal(EtherType.Red) == 1,
+                "強化後コストを戦闘エーテル構成へ反映");
+
+            var shopSession = new RunSession(609);
+            MoveToStage(shopSession, StageKind.Shop);
+            var firstStock =
+                shopSession.GetCurrentShopStock(CardCategory.Attack);
+            var repeatedStock =
+                shopSession.GetCurrentShopStock(CardCategory.Attack);
+            Require(
+                firstStock.Count(
+                    stock =>
+                        CardCatalog.GetRarity(stock.Kind) ==
+                        CardRarity.Normal) == 3 &&
+                firstStock.Count(
+                    stock =>
+                        CardCatalog.GetRarity(stock.Kind) ==
+                        CardRarity.Rare) == 2 &&
+                firstStock.Select(stock => stock.Kind)
+                    .SequenceEqual(
+                        repeatedStock.Select(stock => stock.Kind)),
+                "ショップのカテゴリ別通常3枚・レア2枚と固定在庫");
+            shopSession.Player.Gold = 200;
+            var shopAttack =
+                shopSession.Player.Deck.First(
+                    card => card.Kind == CardKind.Attack);
+            var secondShopAttack =
+                shopSession.Player.Deck.Last(
+                    card => card.Kind == CardKind.Attack);
+            var shopDefense =
+                shopSession.Player.Deck.First(
+                    card => card.Kind == CardKind.Defense);
+            Require(
+                shopSession.TryUpgradeCardAtCurrentShop(shopAttack.Id) &&
+                !shopSession.TryUpgradeCardAtCurrentShop(
+                    secondShopAttack.Id) &&
+                shopSession.TryUpgradeCardAtCurrentShop(shopDefense.Id) &&
+                shopSession.Player.Gold == 140,
+                "ショップごとに各カテゴリ1回・1層30Gの個体強化");
+
+            var bossChoices =
+                new RunSession(610).CreateBossCardRewardChoices();
+            Require(
+                bossChoices.Count == 3 &&
+                bossChoices.All(
+                    kind =>
+                        CardCatalog.GetRarity(kind) ==
+                        CardRarity.Boss),
+                "ボスカード報酬3択");
         }
 
         private static bool IsCurrentMapConnected(RunSession session)

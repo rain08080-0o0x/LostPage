@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace LostPage
 {
@@ -20,17 +21,54 @@ namespace LostPage
         RandomBarrage,
         RedPulseAttack,
         PiercingAreaAttack,
+        AceAttack,
+        GrowingSword,
+        FlameStrike,
+        SweepingFlameStrike,
+        SurgingFlame,
+        Combustion,
+        ExplosionFlame,
+        DefenseConversion,
+        Heatstroke,
         Defense,
         StrongDefense,
         AutoDefense,
         GuardContinuance,
         MirrorShield,
+        FullDefense,
+        SpikedShield,
+        ThornArmor,
+        HeavyArmor,
+        CounterDraw,
+        FullLightAutoDefense,
+        RegressionDefense,
+        Barrier,
+        GoldConversion,
         Charge,
         Resonance,
         HealCharge,
         EtherConversion,
+        BlueResonance,
+        YellowResonance,
+        PurpleResonance,
+        PenetrationPower,
+        AttackRecovery,
+        RedPaperSummon,
+        ShiftingShadow,
+        MagicMirror,
+        DuplicateAttack,
         Persistent,
-        GuardCyclePersistent
+        GuardCyclePersistent,
+        DefensePersistence,
+        CrimsonMoon,
+        PiercingShield,
+        AdditionalDefense,
+        DefenseSupport,
+        DoubleAttackPersistent,
+        AreaAttackPersistent,
+        WristSupporter,
+        Tempering,
+        DivineStrike
     }
 
     public enum CardCategory
@@ -38,7 +76,16 @@ namespace LostPage
         Attack,
         Defense,
         Charge,
-        Persistent
+        Persistent,
+        Special
+    }
+
+    public enum CardRarity
+    {
+        Normal,
+        Rare,
+        Boss,
+        Special
     }
 
     public enum EnemyActionKind
@@ -78,14 +125,16 @@ namespace LostPage
         EnergyCore,
         LargeBelt,
         GuardianJudgment,
-        VorpalDagger
+        VorpalDagger,
+        Myojo
     }
 
     public enum CarryToolRarity
     {
         Normal,
         Rare,
-        Boss
+        Boss,
+        Special
     }
 
     public enum BattlePhase
@@ -109,242 +158,153 @@ namespace LostPage
         public bool PersistentActivated { get; set; }
         public int CooldownRemaining { get; set; }
         public int GrowthBonus { get; set; }
+        public bool IsUpgraded { get; set; }
+        public bool IsTemporary { get; set; }
+        public bool UsedThisBattle { get; set; }
+    }
+
+    public sealed class CardDefinition
+    {
+        public CardDefinition(
+            string name,
+            CardCategory category,
+            CardRarity rarity,
+            string description,
+            IReadOnlyDictionary<EtherType, int> cost,
+            int cooldown,
+            string upgradedDescription,
+            IReadOnlyDictionary<EtherType, int> upgradedCost,
+            int upgradedCooldown,
+            bool oncePerBattle = false,
+            bool upgradedOncePerBattle = false,
+            bool canUpgrade = true)
+        {
+            Name = name;
+            Category = category;
+            Rarity = rarity;
+            Description = description;
+            Cost = cost;
+            Cooldown = cooldown;
+            UpgradedDescription = upgradedDescription;
+            UpgradedCost = upgradedCost;
+            UpgradedCooldown = upgradedCooldown;
+            OncePerBattle = oncePerBattle;
+            UpgradedOncePerBattle = upgradedOncePerBattle;
+            CanUpgrade = canUpgrade;
+        }
+
+        public string Name { get; }
+        public CardCategory Category { get; }
+        public CardRarity Rarity { get; }
+        public string Description { get; }
+        public IReadOnlyDictionary<EtherType, int> Cost { get; }
+        public int Cooldown { get; }
+        public string UpgradedDescription { get; }
+        public IReadOnlyDictionary<EtherType, int> UpgradedCost { get; }
+        public int UpgradedCooldown { get; }
+        public bool OncePerBattle { get; }
+        public bool UpgradedOncePerBattle { get; }
+        public bool CanUpgrade { get; }
     }
 
     public static class CardCatalog
     {
+        private static readonly IReadOnlyDictionary<CardKind, CardDefinition>
+            Definitions = CreateDefinitions();
+
+        public static IEnumerable<CardKind> AllKinds => Definitions.Keys;
+
         public static string GetName(CardKind kind)
         {
-            switch (kind)
-            {
-                case CardKind.Attack:
-                    return "攻撃カード";
-                case CardKind.HeavyAttack:
-                    return "強撃";
-                case CardKind.AreaAttack:
-                    return "薙ぎ払い";
-                case CardKind.GrowthAttack:
-                    return "成長撃";
-                case CardKind.RandomBarrage:
-                    return "乱撃";
-                case CardKind.RedPulseAttack:
-                    return "紅脈撃";
-                case CardKind.PiercingAreaAttack:
-                    return "破界撃";
-                case CardKind.Defense:
-                    return "防御カード";
-                case CardKind.StrongDefense:
-                    return "堅守";
-                case CardKind.AutoDefense:
-                    return "自動障壁";
-                case CardKind.GuardContinuance:
-                    return "守勢継続";
-                case CardKind.MirrorShield:
-                    return "鏡盾";
-                case CardKind.Charge:
-                    return "チャージカード";
-                case CardKind.Resonance:
-                    return "共鳴";
-                case CardKind.HealCharge:
-                    return "治癒";
-                case CardKind.EtherConversion:
-                    return "転換";
-                case CardKind.Persistent:
-                    return "持続カード";
-                case CardKind.GuardCyclePersistent:
-                    return "守護循環";
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
-            }
+            return Get(kind).Name;
         }
 
         public static string GetShortDescription(CardKind kind)
         {
-            switch (kind)
-            {
-                case CardKind.Attack:
-                    return "敵単体に5ダメージ";
-                case CardKind.HeavyAttack:
-                    return "敵単体に17ダメージ";
-                case CardKind.AreaAttack:
-                    return "敵全体に9ダメージ";
-                case CardKind.GrowthAttack:
-                    return "敵単体に8ダメージ。使用後、このカードの攻撃力+3";
-                case CardKind.RandomBarrage:
-                    return "ランダムな敵へ10ダメージを4回";
-                case CardKind.RedPulseAttack:
-                    return "赤エーテル総数+10ダメージ";
-                case CardKind.PiercingAreaAttack:
-                    return "敵全体に36貫通ダメージ";
-                case CardKind.Defense:
-                    return "自分に7シールド";
-                case CardKind.StrongDefense:
-                    return "自分に12シールド";
-                case CardKind.AutoDefense:
-                    return "自動防御を3層獲得";
-                case CardKind.GuardContinuance:
-                    return "自動防御と防御維持を2ずつ獲得";
-                case CardKind.MirrorShield:
-                    return "現在のシールドを2倍にし、防御維持を2獲得";
-                case CardKind.Charge:
-                    return "次の攻撃・防御を+3";
-                case CardKind.Resonance:
-                    return "赤エーテル総数だけ次の攻撃・防御を強化";
-                case CardKind.HealCharge:
-                    return "HPを6回復";
-                case CardKind.EtherConversion:
-                    return "手番エーテルをランダムな1色へ変換し、同色を2個追加";
-                case CardKind.Persistent:
-                    return "攻撃3回ごとに攻撃力+1";
-                case CardKind.GuardCyclePersistent:
-                    return "カード3枚ごとに自動防御+2";
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
-            }
+            return Get(kind).Description;
+        }
+
+        public static string GetShortDescription(CardInstance card)
+        {
+            return card.IsUpgraded
+                ? Get(card.Kind).UpgradedDescription
+                : Get(card.Kind).Description;
         }
 
         public static IReadOnlyDictionary<EtherType, int> GetCost(CardKind kind)
         {
-            switch (kind)
-            {
-                case CardKind.Attack:
-                    return new Dictionary<EtherType, int> { { EtherType.Red, 2 } };
-                case CardKind.HeavyAttack:
-                    return new Dictionary<EtherType, int>
-                    {
-                        { EtherType.Red, 2 },
-                        { EtherType.Blue, 1 }
-                    };
-                case CardKind.AreaAttack:
-                    return new Dictionary<EtherType, int> { { EtherType.Red, 3 } };
-                case CardKind.GrowthAttack:
-                    return new Dictionary<EtherType, int> { { EtherType.Red, 3 } };
-                case CardKind.RandomBarrage:
-                    return new Dictionary<EtherType, int> { { EtherType.Red, 4 } };
-                case CardKind.RedPulseAttack:
-                    return new Dictionary<EtherType, int>
-                    {
-                        { EtherType.Red, 3 },
-                        { EtherType.Blue, 2 }
-                    };
-                case CardKind.PiercingAreaAttack:
-                    return new Dictionary<EtherType, int> { { EtherType.Red, 5 } };
-                case CardKind.Defense:
-                    return new Dictionary<EtherType, int>
-                    {
-                        { EtherType.Red, 1 },
-                        { EtherType.Blue, 1 }
-                    };
-                case CardKind.StrongDefense:
-                case CardKind.AutoDefense:
-                    return new Dictionary<EtherType, int> { { EtherType.Blue, 2 } };
-                case CardKind.GuardContinuance:
-                    return new Dictionary<EtherType, int> { { EtherType.Blue, 3 } };
-                case CardKind.MirrorShield:
-                    return new Dictionary<EtherType, int> { { EtherType.Blue, 4 } };
-                case CardKind.Charge:
-                    return new Dictionary<EtherType, int> { { EtherType.Yellow, 2 } };
-                case CardKind.Resonance:
-                    return new Dictionary<EtherType, int>
-                    {
-                        { EtherType.Red, 2 },
-                        { EtherType.Yellow, 1 }
-                    };
-                case CardKind.HealCharge:
-                case CardKind.EtherConversion:
-                    return new Dictionary<EtherType, int> { { EtherType.Yellow, 3 } };
-                case CardKind.Persistent:
-                    return new Dictionary<EtherType, int>
-                    {
-                        { EtherType.Red, 1 },
-                        { EtherType.Purple, 1 }
-                    };
-                case CardKind.GuardCyclePersistent:
-                    return new Dictionary<EtherType, int>
-                    {
-                        { EtherType.Blue, 1 },
-                        { EtherType.Purple, 2 }
-                    };
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
-            }
+            return Get(kind).Cost;
+        }
+
+        public static IReadOnlyDictionary<EtherType, int> GetCost(
+            CardInstance card)
+        {
+            return card.IsUpgraded
+                ? Get(card.Kind).UpgradedCost
+                : Get(card.Kind).Cost;
         }
 
         public static string GetCostText(CardKind kind)
         {
-            var parts = new List<string>();
-            foreach (var pair in GetCost(kind))
-            {
-                parts.Add($"{GetEtherName(pair.Key)}{pair.Value}");
-            }
+            return GetCostText(GetCost(kind));
+        }
 
-            return string.Join("・", parts);
+        public static string GetCostText(CardInstance card)
+        {
+            return card.Kind == CardKind.DivineStrike
+                ? "手番エーテルすべて"
+                : GetCostText(GetCost(card));
         }
 
         public static int GetCooldown(CardKind kind)
         {
-            switch (kind)
-            {
-                case CardKind.Attack:
-                case CardKind.Defense:
-                    return 1;
-                case CardKind.HeavyAttack:
-                case CardKind.AreaAttack:
-                case CardKind.StrongDefense:
-                case CardKind.AutoDefense:
-                case CardKind.Charge:
-                    return 2;
-                case CardKind.Resonance:
-                    return 3;
-                case CardKind.GrowthAttack:
-                    return 2;
-                case CardKind.RandomBarrage:
-                case CardKind.RedPulseAttack:
-                case CardKind.PiercingAreaAttack:
-                case CardKind.MirrorShield:
-                    return 4;
-                case CardKind.GuardContinuance:
-                case CardKind.EtherConversion:
-                    return 3;
-                case CardKind.HealCharge:
-                    return 2;
-                case CardKind.Persistent:
-                case CardKind.GuardCyclePersistent:
-                    return 0;
-                default:
-                    throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
-            }
+            return Get(kind).Cooldown;
+        }
+
+        public static int GetCooldown(CardInstance card)
+        {
+            return card.IsUpgraded
+                ? Get(card.Kind).UpgradedCooldown
+                : Get(card.Kind).Cooldown;
+        }
+
+        public static bool IsOncePerBattle(CardInstance card)
+        {
+            return card.IsUpgraded
+                ? Get(card.Kind).UpgradedOncePerBattle
+                : Get(card.Kind).OncePerBattle;
         }
 
         public static CardCategory GetCategory(CardKind kind)
         {
-            switch (kind)
+            return Get(kind).Category;
+        }
+
+        public static CardRarity GetRarity(CardKind kind)
+        {
+            return Get(kind).Rarity;
+        }
+
+        public static string GetRarityLabel(CardKind kind)
+        {
+            switch (GetRarity(kind))
             {
-                case CardKind.Attack:
-                case CardKind.HeavyAttack:
-                case CardKind.AreaAttack:
-                case CardKind.GrowthAttack:
-                case CardKind.RandomBarrage:
-                case CardKind.RedPulseAttack:
-                case CardKind.PiercingAreaAttack:
-                    return CardCategory.Attack;
-                case CardKind.Defense:
-                case CardKind.StrongDefense:
-                case CardKind.AutoDefense:
-                case CardKind.GuardContinuance:
-                case CardKind.MirrorShield:
-                    return CardCategory.Defense;
-                case CardKind.Charge:
-                case CardKind.Resonance:
-                case CardKind.HealCharge:
-                case CardKind.EtherConversion:
-                    return CardCategory.Charge;
-                case CardKind.Persistent:
-                case CardKind.GuardCyclePersistent:
-                    return CardCategory.Persistent;
+                case CardRarity.Normal:
+                    return "通常";
+                case CardRarity.Rare:
+                    return "レア";
+                case CardRarity.Boss:
+                    return "ボス";
+                case CardRarity.Special:
+                    return "特殊";
                 default:
-                    throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
+                    throw new ArgumentOutOfRangeException();
             }
+        }
+
+        public static bool CanUpgrade(CardInstance card)
+        {
+            return card != null && Get(card.Kind).CanUpgrade && !card.IsUpgraded;
         }
 
         public static bool IsAttack(CardKind kind)
@@ -354,10 +314,28 @@ namespace LostPage
 
         public static bool IsSingleTargetAttack(CardKind kind)
         {
-            return kind == CardKind.Attack ||
-                   kind == CardKind.HeavyAttack ||
-                   kind == CardKind.GrowthAttack ||
-                   kind == CardKind.RedPulseAttack;
+            switch (kind)
+            {
+                case CardKind.Attack:
+                case CardKind.HeavyAttack:
+                case CardKind.GrowthAttack:
+                case CardKind.RedPulseAttack:
+                case CardKind.AceAttack:
+                case CardKind.GrowingSword:
+                case CardKind.FlameStrike:
+                case CardKind.SurgingFlame:
+                case CardKind.DefenseConversion:
+                case CardKind.Heatstroke:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        public static bool RequiresEnemyTarget(CardKind kind)
+        {
+            return IsSingleTargetAttack(kind) ||
+                   kind == CardKind.ExplosionFlame;
         }
 
         public static bool IsPersistent(CardKind kind)
@@ -380,6 +358,271 @@ namespace LostPage
                 default:
                     throw new ArgumentOutOfRangeException(nameof(type), type, null);
             }
+        }
+
+        private static CardDefinition Get(CardKind kind)
+        {
+            if (!Definitions.TryGetValue(kind, out var definition))
+            {
+                throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
+            }
+
+            return definition;
+        }
+
+        private static string GetCostText(
+            IReadOnlyDictionary<EtherType, int> cost)
+        {
+            var parts = new List<string>();
+            foreach (var pair in cost)
+            {
+                parts.Add($"{GetEtherName(pair.Key)}{pair.Value}");
+            }
+
+            return parts.Count == 0 ? "なし" : string.Join("・", parts);
+        }
+
+        private static IReadOnlyDictionary<EtherType, int> Cost(
+            int red = 0,
+            int blue = 0,
+            int yellow = 0,
+            int purple = 0)
+        {
+            var result = new Dictionary<EtherType, int>();
+            if (red > 0)
+            {
+                result[EtherType.Red] = red;
+            }
+
+            if (blue > 0)
+            {
+                result[EtherType.Blue] = blue;
+            }
+
+            if (yellow > 0)
+            {
+                result[EtherType.Yellow] = yellow;
+            }
+
+            if (purple > 0)
+            {
+                result[EtherType.Purple] = purple;
+            }
+
+            return result;
+        }
+
+        private static CardDefinition D(
+            string name,
+            CardCategory category,
+            CardRarity rarity,
+            string normal,
+            IReadOnlyDictionary<EtherType, int> normalCost,
+            int normalCooldown,
+            string upgraded,
+            IReadOnlyDictionary<EtherType, int> upgradedCost,
+            int upgradedCooldown,
+            bool once = false,
+            bool upgradedOnce = false,
+            bool canUpgrade = true)
+        {
+            return new CardDefinition(
+                name,
+                category,
+                rarity,
+                normal,
+                normalCost,
+                normalCooldown,
+                upgraded,
+                upgradedCost,
+                upgradedCooldown,
+                once,
+                upgradedOnce,
+                canUpgrade);
+        }
+
+        private static IReadOnlyDictionary<CardKind, CardDefinition>
+            CreateDefinitions()
+        {
+            var attack = CardCategory.Attack;
+            var defense = CardCategory.Defense;
+            var charge = CardCategory.Charge;
+            var persistent = CardCategory.Persistent;
+            var normal = CardRarity.Normal;
+            var rare = CardRarity.Rare;
+            var boss = CardRarity.Boss;
+            return new Dictionary<CardKind, CardDefinition>
+            {
+                [CardKind.Attack] = D("攻撃カード", attack, normal,
+                    "敵単体に5ダメージ", Cost(red: 2), 1,
+                    "敵単体に10ダメージ", Cost(red: 1), 1),
+                [CardKind.HeavyAttack] = D("強撃", attack, normal,
+                    "敵単体に17ダメージ", Cost(red: 2, blue: 1), 2,
+                    "敵単体に24ダメージ", Cost(red: 2), 2),
+                [CardKind.AreaAttack] = D("薙ぎ払い", attack, normal,
+                    "敵全体に9ダメージ", Cost(red: 3), 2,
+                    "敵全体に15ダメージ", Cost(red: 2), 1),
+                [CardKind.GrowthAttack] = D("成長撃", attack, rare,
+                    "敵単体に8ダメージ。使用後、このカード個体の基礎ダメージ+3", Cost(red: 3), 2,
+                    "敵単体に10ダメージ。使用後、このカード個体の基礎ダメージ+4", Cost(red: 2), 2),
+                [CardKind.RandomBarrage] = D("乱撃", attack, rare,
+                    "生存する敵へランダムに10ダメージを4回", Cost(red: 4), 4,
+                    "生存する敵へランダムに18ダメージを4回", Cost(red: 3), 3),
+                [CardKind.RedPulseAttack] = D("紅脈撃", attack, boss,
+                    "敵単体に総赤エーテル数+10ダメージ", Cost(red: 3, blue: 2), 4,
+                    "敵単体に総赤エーテル数+15ダメージ", Cost(red: 2, blue: 1), 3),
+                [CardKind.PiercingAreaAttack] = D("破界撃", attack, rare,
+                    "敵全体に36貫通ダメージ", Cost(red: 5), 4,
+                    "敵全体に48貫通ダメージ", Cost(red: 4), 3),
+                [CardKind.AceAttack] = D("切り札", attack, boss,
+                    "攻撃カード所持数×4+総赤エーテル数の単体ダメージ", Cost(red: 5), 5,
+                    "攻撃カード所持数×8+総赤エーテル数の単体ダメージ", Cost(red: 4), 4),
+                [CardKind.GrowingSword] = D("成長する刀", attack, rare,
+                    "敵単体に1ダメージ。攻撃カード使用ごとにこのカードの攻撃力+2", Cost(red: 2, blue: 1), 2,
+                    "敵単体に1ダメージ。攻撃カード使用ごとにこのカードの攻撃力+4", Cost(red: 2), 2),
+                [CardKind.FlameStrike] = D("炎撃", attack, normal,
+                    "敵単体に7ダメージ、炎3を付与", Cost(red: 2, blue: 1), 1,
+                    "敵単体に10ダメージ、炎6を付与", Cost(red: 2), 1),
+                [CardKind.SweepingFlameStrike] = D("薙ぎ炎撃", attack, normal,
+                    "敵全体に6ダメージ、炎3を付与", Cost(red: 3), 2,
+                    "敵全体に12ダメージ、炎5を付与", Cost(red: 2), 2),
+                [CardKind.SurgingFlame] = D("湧き上がる炎", attack, rare,
+                    "敵単体に5ダメージと炎2付与を2回", Cost(red: 2), 3,
+                    "敵単体に14ダメージと炎4付与を2回", Cost(red: 2), 2),
+                [CardKind.Combustion] = D("燃焼", attack, normal,
+                    "敵全体の炎を3回発動", Cost(red: 2), 3,
+                    "敵全体の炎を3回発動", Cost(red: 2), 2),
+                [CardKind.ExplosionFlame] = D("爆炎", attack, rare,
+                    "敵単体の炎を2倍", Cost(red: 2), 0,
+                    "敵単体の炎を2倍", Cost(red: 1), 0, true, true),
+                [CardKind.DefenseConversion] = D("防御変換", attack, boss,
+                    "シールドの半分を消費して同量の単体ダメージ。チャージを2倍適用", Cost(red: 2, blue: 1, yellow: 1), 2,
+                    "シールドの半分を消費して同量の単体ダメージ。チャージを2倍適用", Cost(red: 1, blue: 1, yellow: 1), 2),
+                [CardKind.Heatstroke] = D("熱射病", attack, boss,
+                    "敵単体に炎4を付与し、炎がなくなるまで発動", Cost(red: 2, yellow: 1), 0,
+                    "敵単体に炎6を付与し、炎がなくなるまで発動", Cost(red: 1, yellow: 1), 3, true, false),
+
+                [CardKind.Defense] = D("防御カード", defense, normal,
+                    "自分に7シールド", Cost(red: 1, blue: 1), 1,
+                    "自分に12シールド", Cost(blue: 1), 1),
+                [CardKind.StrongDefense] = D("堅守", defense, normal,
+                    "自分に12シールド", Cost(blue: 2), 2,
+                    "自分に20シールド", Cost(blue: 2), 1),
+                [CardKind.AutoDefense] = D("自動障壁", defense, normal,
+                    "自動防御を3獲得", Cost(blue: 2), 2,
+                    "自動防御を6獲得", Cost(blue: 2), 2),
+                [CardKind.GuardContinuance] = D("守勢継続", defense, normal,
+                    "自動防御と防御維持を2ずつ獲得", Cost(blue: 3), 3,
+                    "自動防御と防御維持を2ずつ獲得", Cost(blue: 2), 2),
+                [CardKind.MirrorShield] = D("鏡盾", defense, rare,
+                    "現在のシールドを2倍にし、防御維持2を獲得", Cost(blue: 4), 4,
+                    "現在のシールドを3倍にし、防御維持3を獲得", Cost(blue: 2), 3),
+                [CardKind.FullDefense] = D("全力防御", defense, rare,
+                    "総青エーテル数だけシールドを獲得", Cost(blue: 3), 2,
+                    "総青エーテル数×2のシールドを獲得", Cost(blue: 3), 2),
+                [CardKind.SpikedShield] = D("棘付き盾", defense, normal,
+                    "シールド6、反射2を獲得", Cost(red: 1, blue: 2), 2,
+                    "シールド12、反射4を獲得", Cost(red: 1, blue: 1), 2),
+                [CardKind.ThornArmor] = D("茨の鎧", defense, normal,
+                    "反射6を獲得", Cost(red: 1, blue: 2), 3,
+                    "反射12を獲得", Cost(red: 1, blue: 1), 2),
+                [CardKind.HeavyArmor] = D("重厚鎧", defense, rare,
+                    "シールド14を獲得し、防御維持がなければ防御維持1を獲得", Cost(blue: 3), 2,
+                    "シールド14を獲得し、防御維持がなければ防御維持1を獲得", Cost(blue: 2), 2),
+                [CardKind.CounterDraw] = D("カウンタードロー", defense, rare,
+                    "シールド6を獲得。攻撃予定の敵数だけエーテルをドロー", Cost(blue: 1, yellow: 1), 3,
+                    "シールド6を獲得。攻撃予定の敵数だけエーテルをドロー", Cost(blue: 1, yellow: 1), 2),
+                [CardKind.FullLightAutoDefense] = D("フルライト自動防御", defense, boss,
+                    "自動防御12、防御維持3を獲得", Cost(blue: 3), 8,
+                    "自動防御24、防御維持8を獲得", Cost(blue: 2), 4),
+                [CardKind.RegressionDefense] = D("回帰防御", defense, boss,
+                    "戦闘中に失ったシールド合計を獲得し、防御維持3を獲得", Cost(red: 1, blue: 2, yellow: 1), 0,
+                    "戦闘中に失ったシールド合計×1.5を獲得し、防御維持6を獲得", Cost(red: 1, blue: 1, yellow: 1), 5, true, false),
+                [CardKind.Barrier] = D("防壁", defense, boss,
+                    "シールド30、防御維持5を獲得", Cost(blue: 4), 0,
+                    "シールド30、防御維持8を獲得", Cost(blue: 3), 3, true, false),
+                [CardKind.GoldConversion] = D("金貨変換", defense, rare,
+                    "所持ゴールドの7%を消費し、その2倍のシールドを獲得", Cost(blue: 2, yellow: 1), 3,
+                    "所持ゴールドの7%を消費し、その4倍のシールドを獲得", Cost(blue: 1, yellow: 1), 2),
+
+                [CardKind.Charge] = D("チャージカード", charge, normal,
+                    "チャージ3を獲得", Cost(yellow: 2), 2,
+                    "チャージ8を獲得", Cost(yellow: 1), 2),
+                [CardKind.Resonance] = D("共鳴", charge, rare,
+                    "総赤エーテル数だけチャージを獲得", Cost(red: 2, yellow: 1), 3,
+                    "総赤エーテル数×1.5のチャージを獲得", Cost(red: 1, yellow: 1), 2),
+                [CardKind.HealCharge] = D("治癒", charge, normal,
+                    "HPを6回復", Cost(yellow: 3), 2,
+                    "HPを12回復", Cost(yellow: 2), 2),
+                [CardKind.EtherConversion] = D("転換", charge, rare,
+                    "手番エーテルをランダムな1色へ変換し、その色を2個追加", Cost(yellow: 3), 3,
+                    "手番エーテルをランダムな1色へ変換し、その色を4個追加", Cost(yellow: 2), 2),
+                [CardKind.BlueResonance] = D("共鳴-青-", charge, normal,
+                    "総青エーテル数だけチャージを獲得", Cost(blue: 2, yellow: 1), 2,
+                    "総青エーテル数×1.5のチャージを獲得", Cost(blue: 1, yellow: 1), 2),
+                [CardKind.YellowResonance] = D("共鳴-黄-", charge, normal,
+                    "総黄エーテル数×3のチャージを獲得", Cost(yellow: 3), 3,
+                    "総黄エーテル数×6のチャージを獲得", Cost(yellow: 2), 2),
+                [CardKind.PurpleResonance] = D("共鳴-紫-", charge, normal,
+                    "所持する持続カードをランダムに1枚発動", Cost(purple: 3), 3,
+                    "未発動の持続カードをランダムに1枚発動", Cost(yellow: 1, purple: 1), 2),
+                [CardKind.PenetrationPower] = D("貫通力", charge, normal,
+                    "貫通5を獲得", Cost(red: 1, yellow: 1), 5,
+                    "貫通10を獲得", Cost(yellow: 1), 3),
+                [CardKind.AttackRecovery] = D("攻撃回収", charge, normal,
+                    "このターンに使用した攻撃カード数だけ攻撃力を獲得", Cost(red: 1, yellow: 1), 2,
+                    "このターンに使用した攻撃カード数×2の攻撃力を獲得", Cost(red: 1, yellow: 1), 2),
+                [CardKind.RedPaperSummon] = D("赤紙召喚", charge, normal,
+                    "ボス・特殊を除く攻撃カードを一時的に2枚生成", Cost(red: 1, yellow: 1), 0,
+                    "ボス・特殊を除く攻撃カードを一時的に2枚生成", Cost(red: 1, yellow: 1), 5, true, false),
+                [CardKind.ShiftingShadow] = D("揺らぐ影", charge, normal,
+                    "敵全体に弱化6を付与", Cost(yellow: 3), 3,
+                    "敵全体に弱化12を付与", Cost(yellow: 2), 2),
+                [CardKind.MagicMirror] = D("マジックミラー", charge, boss,
+                    "シールドの半分を消費し、その数だけチャージを獲得", Cost(blue: 2, yellow: 2), 5,
+                    "シールドの半分を消費し、その数だけチャージを獲得", Cost(blue: 1, yellow: 1), 3),
+                [CardKind.DuplicateAttack] = D("複製攻撃", charge, rare,
+                    "次の攻撃カードを合計2回発動", Cost(red: 1, yellow: 2), 3,
+                    "次の攻撃カードを合計3回発動", Cost(red: 1, yellow: 1), 2),
+
+                [CardKind.Persistent] = D("持続カード", persistent, normal,
+                    "攻撃カード3枚ごとに攻撃力+1", Cost(red: 1, purple: 1), 0,
+                    "攻撃カード2枚ごとに攻撃力+2", Cost(purple: 1), 0),
+                [CardKind.GuardCyclePersistent] = D("守護循環", persistent, rare,
+                    "カード3枚ごとに自動防御+2", Cost(blue: 1, purple: 2), 0,
+                    "カード2枚ごとに自動防御+4", Cost(purple: 1), 0),
+                [CardKind.DefensePersistence] = D("防御持続", persistent, boss,
+                    "シールドがある間、防御維持が減らない", Cost(blue: 3, purple: 1), 0,
+                    "シールドがある間、防御維持が減らない", Cost(blue: 1, purple: 1), 0),
+                [CardKind.CrimsonMoon] = D("赤い紅い月", persistent, boss,
+                    "攻撃力+5。攻撃カードの消費エーテル数だけ対象へ出血を付与", Cost(red: 3, purple: 1), 0,
+                    "攻撃力+8。攻撃カードの消費エーテル数×2の出血を対象へ付与", Cost(red: 2, purple: 1), 0),
+                [CardKind.PiercingShield] = D("貫盾", persistent, rare,
+                    "貫通時、対象のシールド半分をダメージへ追加", Cost(red: 1, blue: 1, purple: 1), 0,
+                    "貫通時、対象のシールド半分をダメージへ追加", Cost(red: 1, purple: 1), 0),
+                [CardKind.AdditionalDefense] = D("追加防御", persistent, rare,
+                    "自動防御獲得時、同量のシールドも獲得", Cost(blue: 2, purple: 1), 0,
+                    "自動防御獲得時、同量のシールドも獲得", Cost(blue: 1, purple: 1), 0),
+                [CardKind.DefenseSupport] = D("防御補助", persistent, normal,
+                    "防御カード3枚ごとに防御力+1", Cost(blue: 1, purple: 1), 0,
+                    "防御カード3枚ごとに防御力+2", Cost(blue: 1, purple: 1), 0),
+                [CardKind.DoubleAttackPersistent] = D("二回攻撃", persistent, normal,
+                    "攻撃カード3枚ごとに、その攻撃を2回発動", Cost(red: 2, purple: 1), 0,
+                    "攻撃カード2枚ごとに、その攻撃を2回発動", Cost(red: 1, purple: 1), 0),
+                [CardKind.AreaAttackPersistent] = D("全体攻撃", persistent, normal,
+                    "攻撃カード3枚ごとに、その攻撃を全体化", Cost(red: 2, purple: 1), 0,
+                    "攻撃カード2枚ごとに、その攻撃を全体化", Cost(red: 1, purple: 1), 0),
+                [CardKind.WristSupporter] = D("リストサポーター", persistent, normal,
+                    "ターン終了時、使用カードが3枚以下なら攻撃力+1", Cost(red: 1, purple: 1), 0,
+                    "ターン終了時、使用カードが2枚以下なら攻撃力+2", Cost(red: 1, purple: 1), 0),
+                [CardKind.Tempering] = D("焼入れ", persistent, normal,
+                    "敵の攻撃を受けた後に反射+1", Cost(blue: 1, purple: 1), 0,
+                    "敵の攻撃を受けた後に反射+2", Cost(blue: 1, purple: 1), 0),
+
+                [CardKind.DivineStrike] = D("神撃", CardCategory.Special, CardRarity.Special,
+                    "手番エーテルをすべて消費し、最も多い色に応じた効果を発動", Cost(), 8,
+                    "強化対象外", Cost(), 8, false, false, false)
+            };
         }
     }
 
@@ -423,6 +666,8 @@ namespace LostPage
                     return "守護者の裁き";
                 case CarryToolKind.VorpalDagger:
                     return "ヴォーパルダガー";
+                case CarryToolKind.Myojo:
+                    return "明星";
                 default:
                     throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
             }
@@ -466,6 +711,8 @@ namespace LostPage
                     return "シールド獲得時、総量の20%をランダムな敵へ与える";
                 case CarryToolKind.VorpalDagger:
                     return "敵単体カードでは攻撃力を総エーテルコスト倍で適用";
+                case CarryToolKind.Myojo:
+                    return "自ターン開始時、1個につきチャージ+50";
                 default:
                     throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
             }
@@ -487,6 +734,8 @@ namespace LostPage
                 case CarryToolKind.GuardianJudgment:
                 case CarryToolKind.VorpalDagger:
                     return CarryToolRarity.Boss;
+                case CarryToolKind.Myojo:
+                    return CarryToolRarity.Special;
                 default:
                     return CarryToolRarity.Normal;
             }
@@ -494,7 +743,12 @@ namespace LostPage
 
         public static int GetMaxCount(CarryToolKind kind)
         {
-            return kind == CarryToolKind.BigBag ? 2 : 1;
+            if (kind == CarryToolKind.BigBag)
+            {
+                return 2;
+            }
+
+            return kind == CarryToolKind.Myojo ? int.MaxValue : 1;
         }
 
         public static string GetRarityLabel(CarryToolKind kind)
@@ -507,6 +761,8 @@ namespace LostPage
                     return "レア";
                 case CarryToolRarity.Boss:
                     return "ボス";
+                case CarryToolRarity.Special:
+                    return "特殊";
                 default:
                     throw new ArgumentOutOfRangeException();
             }
@@ -551,15 +807,35 @@ namespace LostPage
             AddCard(CardKind.Charge);
         }
 
-        public CardInstance AddCard(CardKind kind)
+        public bool CanAddCard(CardKind kind)
         {
+            return !CardCatalog.IsPersistent(kind) ||
+                   Deck.All(card => card.Kind != kind);
+        }
+
+        public CardInstance AddCard(
+            CardKind kind,
+            bool isTemporary = false)
+        {
+            if (!CanAddCard(kind))
+            {
+                throw new InvalidOperationException(
+                    $"{CardCatalog.GetName(kind)}はすでに所持しています。");
+            }
+
             var card = new CardInstance(_nextCardId++, kind);
+            card.IsTemporary = isTemporary;
             var category = CardCatalog.GetCategory(kind);
             var insertionIndex =
                 Deck.FindLastIndex(
                     existing => CardCatalog.GetCategory(existing.Kind) <= category) + 1;
             Deck.Insert(insertionIndex, card);
             return card;
+        }
+
+        public void RemoveTemporaryCards()
+        {
+            Deck.RemoveAll(card => card.IsTemporary);
         }
 
         public int GetToolCount(CarryToolKind kind)
@@ -586,6 +862,7 @@ namespace LostPage
             }
 
             _toolCounts[kind] = GetToolCount(kind) + 1;
+            ResolveSpecialAcquisitions();
         }
 
         public int GetCarryLimit()
@@ -613,6 +890,41 @@ namespace LostPage
             }
 
             return HasTool(CarryToolKind.StarFragment) ? 6 : 0;
+        }
+
+        private void ResolveSpecialAcquisitions()
+        {
+            if (HasTool(CarryToolKind.SmallBag) &&
+                GetToolCount(CarryToolKind.BigBag) >= 2 &&
+                HasTool(CarryToolKind.EnergyCore) &&
+                Deck.All(card => card.Kind != CardKind.DivineStrike))
+            {
+                AddCard(CardKind.DivineStrike);
+            }
+
+            while (HasTool(CarryToolKind.StarFragment) &&
+                   HasTool(CarryToolKind.StarMass) &&
+                   HasTool(CarryToolKind.StarOrb))
+            {
+                RemoveTool(CarryToolKind.StarFragment);
+                RemoveTool(CarryToolKind.StarMass);
+                RemoveTool(CarryToolKind.StarOrb);
+                _toolCounts[CarryToolKind.Myojo] =
+                    GetToolCount(CarryToolKind.Myojo) + 1;
+            }
+        }
+
+        private void RemoveTool(CarryToolKind kind)
+        {
+            var count = GetToolCount(kind);
+            if (count <= 1)
+            {
+                _toolCounts.Remove(kind);
+            }
+            else
+            {
+                _toolCounts[kind] = count - 1;
+            }
         }
 
         public void IncreaseMaxHpAndHealToFull(int amount)
@@ -677,6 +989,9 @@ namespace LostPage
         public int ActionIndex { get; private set; }
         public bool IsAlive => Hp > 0;
         public EnemyActionKind NextAction => _pattern[ActionIndex % _pattern.Length];
+        public int Fire { get; set; }
+        public int Bleed { get; set; }
+        public int Weakness { get; set; }
 
         public int ReceiveDamage(int damage)
         {

@@ -4,6 +4,28 @@ using System.Linq;
 
 namespace LostPage
 {
+    public enum RandomEventKind
+    {
+        FoundGold,
+        Rest,
+        TrapTreasure,
+        FreeUpgrade,
+        BloodUpgrade
+    }
+
+    public sealed class ShopCardStock
+    {
+        public ShopCardStock(int id, CardKind kind)
+        {
+            Id = id;
+            Kind = kind;
+        }
+
+        public int Id { get; }
+        public CardKind Kind { get; }
+        public bool Purchased { get; set; }
+    }
+
     public sealed class RewardStageResult
     {
         public RewardStageResult(
@@ -136,6 +158,15 @@ namespace LostPage
         };
 
         private Dictionary<int, MapNode> _nodes;
+        private readonly Dictionary<int, List<ShopCardStock>> _shopStocks =
+            new Dictionary<int, List<ShopCardStock>>();
+        private readonly Dictionary<int, HashSet<CardCategory>>
+            _shopUpgradedCategories =
+                new Dictionary<int, HashSet<CardCategory>>();
+        private readonly Dictionary<int, RandomEventKind> _randomEvents =
+            new Dictionary<int, RandomEventKind>();
+        private int _freeEventUpgrades;
+        private int _pendingBloodEventUpgrades;
 
         private sealed class EnemyTemplate
         {
@@ -187,6 +218,10 @@ namespace LostPage
         public float MapContentWidth => _nodes.Values.Max(node => node.X) + 300f;
         public float MapContentHeight => _nodes.Values.Max(node => node.Y) + 200f;
         public int CurrentFogDamage => 5 + (CurrentLayer - 1) * 2;
+        public int ShopUpgradePrice => 30 + (CurrentLayer - 1) * 5;
+        public int PendingBloodEventUpgrades =>
+            _pendingBloodEventUpgrades;
+        public int FreeEventUpgrades => _freeEventUpgrades;
         public float FogBoundaryY =>
             MapStartY + FogDepth * MapRowSpacing;
 
@@ -255,6 +290,7 @@ namespace LostPage
 
             LastBattleGoldReward = reward;
             Player.Gold += reward;
+            Player.RemoveTemporaryCards();
             CurrentNode.Cleared = true;
             return reward;
         }
@@ -281,16 +317,43 @@ namespace LostPage
             MapMoveCount = 0;
             FogDepth = InitialFogDepth;
             LastTravelFogDamage = 0;
+            _shopStocks.Clear();
+            _shopUpgradedCategories.Clear();
+            _randomEvents.Clear();
         }
 
         public IReadOnlyList<CardKind> CreateCardRewardChoices()
         {
-            var candidates = Enum.GetValues(typeof(CardKind))
-                .Cast<CardKind>()
-                .OrderBy(_ => Random.Next())
-                .Take(3)
-                .ToList();
-            return candidates;
+            var choices = new List<CardKind>();
+            while (choices.Count < 3)
+            {
+                var rarity = Random.NextDouble() < 0.25
+                    ? CardRarity.Rare
+                    : CardRarity.Normal;
+                var candidate = SelectCardCandidate(rarity, choices);
+                if (!candidate.HasValue)
+                {
+                    candidate = SelectCardCandidate(
+                        rarity == CardRarity.Rare
+                            ? CardRarity.Normal
+                            : CardRarity.Rare,
+                        choices);
+                }
+
+                if (!candidate.HasValue)
+                {
+                    break;
+                }
+
+                choices.Add(candidate.Value);
+            }
+
+            return choices;
+        }
+
+        public IReadOnlyList<CardKind> CreateBossCardRewardChoices()
+        {
+            return CreateCardChoices(CardRarity.Boss, 3);
         }
 
         public IReadOnlyList<CarryToolKind> CreateStartingToolChoices()
@@ -351,24 +414,28 @@ namespace LostPage
             }
 
             string result;
-            switch (Random.Next(3))
+            switch (GetCurrentRandomEventKind())
             {
-                case 0:
+                case RandomEventKind.FoundGold:
                     Player.Gold += 15;
                     result = "落とし物から15ゴールドを獲得しました。";
                     break;
-                case 1:
+                case RandomEventKind.Rest:
                     var healed = Player.Heal(20);
                     result =
                         $"休息できる場所を見つけ、HPを{healed}回復しました。";
                     break;
-                case 2:
+                case RandomEventKind.TrapTreasure:
                     var lostHp = Player.LoseHp(10);
                     Player.Gold += 25;
                     result =
                         $"罠でHPを{lostHp}失いましたが、" +
                         "25ゴールドを獲得しました。";
                     break;
+                case RandomEventKind.FreeUpgrade:
+                case RandomEventKind.BloodUpgrade:
+                    throw new InvalidOperationException(
+                        "このイベントはカードを選択して解決してください。");
                 default:
                     throw new InvalidOperationException(
                         "ランダムイベントの抽選結果が不正です。");
@@ -376,6 +443,139 @@ namespace LostPage
 
             CurrentNode.Cleared = true;
             return result;
+        }
+
+        public RandomEventKind GetCurrentRandomEventKind()
+        {
+            if (CurrentNode.Kind != StageKind.RandomEvent ||
+                CurrentNode.Cleared)
+            {
+                throw new InvalidOperationException(
+                    "現在地ではランダムイベントを実行できません。");
+            }
+
+            if (_randomEvents.TryGetValue(
+                    CurrentNodeId,
+                    out var selected))
+            {
+                return selected;
+            }
+
+            var candidates = new List<RandomEventKind>
+            {
+                RandomEventKind.FoundGold,
+                RandomEventKind.Rest,
+                RandomEventKind.TrapTreasure
+            };
+            var upgradableCount =
+                Player.Deck.Count(CardCatalog.CanUpgrade);
+            if (upgradableCount > 0)
+            {
+                candidates.Add(RandomEventKind.FreeUpgrade);
+            }
+
+            if (upgradableCount > 0 && Player.Hp > 6)
+            {
+                candidates.Add(RandomEventKind.BloodUpgrade);
+            }
+
+            selected = candidates[Random.Next(candidates.Count)];
+            _randomEvents[CurrentNodeId] = selected;
+            _freeEventUpgrades = 0;
+            _pendingBloodEventUpgrades = 0;
+            return selected;
+        }
+
+        public IReadOnlyList<CardInstance> GetUpgradeableCards()
+        {
+            return Player.Deck
+                .Where(CardCatalog.CanUpgrade)
+                .ToList();
+        }
+
+        public bool TryUpgradeCardForFreeEvent(int cardId)
+        {
+            if (GetCurrentRandomEventKind() !=
+                    RandomEventKind.FreeUpgrade ||
+                _freeEventUpgrades >= 2)
+            {
+                return false;
+            }
+
+            var card = GetUpgradeableCard(cardId);
+            if (card == null)
+            {
+                return false;
+            }
+
+            card.IsUpgraded = true;
+            _freeEventUpgrades++;
+            if (_freeEventUpgrades >= 2 ||
+                !Player.Deck.Any(CardCatalog.CanUpgrade))
+            {
+                CurrentNode.Cleared = true;
+            }
+
+            return true;
+        }
+
+        public void FinishFreeUpgradeEvent()
+        {
+            if (GetCurrentRandomEventKind() !=
+                    RandomEventKind.FreeUpgrade ||
+                _freeEventUpgrades <= 0)
+            {
+                throw new InvalidOperationException(
+                    "カードを1枚以上強化してください。");
+            }
+
+            CurrentNode.Cleared = true;
+        }
+
+        public bool CanChooseBloodUpgradeCount(int count)
+        {
+            return count >= 1 &&
+                   count <= 3 &&
+                   Player.Hp - count * 6 >= 1 &&
+                   GetUpgradeableCards().Count >= count;
+        }
+
+        public bool StartBloodUpgradeEvent(int count)
+        {
+            if (GetCurrentRandomEventKind() !=
+                    RandomEventKind.BloodUpgrade ||
+                _pendingBloodEventUpgrades > 0 ||
+                !CanChooseBloodUpgradeCount(count))
+            {
+                return false;
+            }
+
+            Player.LoseHp(count * 6);
+            _pendingBloodEventUpgrades = count;
+            return true;
+        }
+
+        public bool TryUpgradeCardForBloodEvent(int cardId)
+        {
+            if (_pendingBloodEventUpgrades <= 0)
+            {
+                return false;
+            }
+
+            var card = GetUpgradeableCard(cardId);
+            if (card == null)
+            {
+                return false;
+            }
+
+            card.IsUpgraded = true;
+            _pendingBloodEventUpgrades--;
+            if (_pendingBloodEventUpgrades == 0)
+            {
+                CurrentNode.Cleared = true;
+            }
+
+            return true;
         }
 
         public RewardStageResult ClaimCurrentReward()
@@ -414,9 +614,50 @@ namespace LostPage
             return new RewardStageResult(rewards, rareTool);
         }
 
+        public IReadOnlyList<ShopCardStock> GetCurrentShopStock(
+            CardCategory category)
+        {
+            EnsureCurrentShop();
+            return GetOrCreateShopStock()
+                .Where(stock => CardCatalog.GetCategory(stock.Kind) == category)
+                .ToList();
+        }
+
+        public bool TryBuyShopCard(int stockId)
+        {
+            EnsureCurrentShop();
+            var stock = GetOrCreateShopStock()
+                .FirstOrDefault(candidate => candidate.Id == stockId);
+            if (stock == null ||
+                stock.Purchased ||
+                !Player.CanAddCard(stock.Kind) ||
+                Player.Gold < ShopCardPrice)
+            {
+                return false;
+            }
+
+            Player.Gold -= ShopCardPrice;
+            Player.AddCard(stock.Kind);
+            stock.Purchased = true;
+            ShopCardPrice += ShopCardPriceIncrease;
+            return true;
+        }
+
         public bool TryBuyCard(CardKind kind)
         {
+            var rarity = CardCatalog.GetRarity(kind);
+            if (rarity != CardRarity.Normal &&
+                rarity != CardRarity.Rare)
+            {
+                return false;
+            }
+
             if (Player.Gold < ShopCardPrice)
+            {
+                return false;
+            }
+
+            if (!Player.CanAddCard(kind))
             {
                 return false;
             }
@@ -425,6 +666,164 @@ namespace LostPage
             Player.AddCard(kind);
             ShopCardPrice += ShopCardPriceIncrease;
             return true;
+        }
+
+        public bool CanUpgradeCardAtCurrentShop(CardInstance card)
+        {
+            EnsureCurrentShop();
+            var category = card == null
+                ? CardCategory.Special
+                : CardCatalog.GetCategory(card.Kind);
+            return card != null &&
+                   category != CardCategory.Special &&
+                   CardCatalog.CanUpgrade(card) &&
+                   !GetShopUpgradedCategories().Contains(category) &&
+                   Player.Gold >= ShopUpgradePrice;
+        }
+
+        public bool TryUpgradeCardAtCurrentShop(int cardId)
+        {
+            EnsureCurrentShop();
+            var card = GetUpgradeableCard(cardId);
+            if (!CanUpgradeCardAtCurrentShop(card))
+            {
+                return false;
+            }
+
+            var category = CardCatalog.GetCategory(card.Kind);
+            Player.Gold -= ShopUpgradePrice;
+            card.IsUpgraded = true;
+            GetShopUpgradedCategories().Add(category);
+            return true;
+        }
+
+        public bool HasUpgradedCategoryAtCurrentShop(
+            CardCategory category)
+        {
+            EnsureCurrentShop();
+            return GetShopUpgradedCategories().Contains(category);
+        }
+
+        private IReadOnlyList<CardKind> CreateCardChoices(
+            CardRarity rarity,
+            int count)
+        {
+            var choices = new List<CardKind>();
+            while (choices.Count < count)
+            {
+                var candidate = SelectCardCandidate(rarity, choices);
+                if (!candidate.HasValue)
+                {
+                    break;
+                }
+
+                choices.Add(candidate.Value);
+            }
+
+            return choices;
+        }
+
+        private CardKind? SelectCardCandidate(
+            CardRarity rarity,
+            IReadOnlyCollection<CardKind> excluded)
+        {
+            var candidates = CardCatalog.AllKinds
+                .Where(kind => CardCatalog.GetRarity(kind) == rarity)
+                .Where(kind => !excluded.Contains(kind))
+                .Where(
+                    kind =>
+                        !CardCatalog.IsPersistent(kind) ||
+                        Player.CanAddCard(kind))
+                .ToList();
+            return candidates.Count == 0
+                ? (CardKind?)null
+                : candidates[Random.Next(candidates.Count)];
+        }
+
+        private List<ShopCardStock> GetOrCreateShopStock()
+        {
+            if (_shopStocks.TryGetValue(
+                    CurrentNodeId,
+                    out var existing))
+            {
+                return existing;
+            }
+
+            var stock = new List<ShopCardStock>();
+            var nextId = 0;
+            foreach (var category in new[]
+                     {
+                         CardCategory.Attack,
+                         CardCategory.Defense,
+                         CardCategory.Charge,
+                         CardCategory.Persistent
+                     })
+            {
+                foreach (var rarityAndCount in new[]
+                         {
+                             new
+                             {
+                                 Rarity = CardRarity.Normal,
+                                 Count = 3
+                             },
+                             new
+                             {
+                                 Rarity = CardRarity.Rare,
+                                 Count = 2
+                             }
+                         })
+                {
+                    var selected = CardCatalog.AllKinds
+                        .Where(
+                            kind =>
+                                CardCatalog.GetCategory(kind) == category &&
+                                CardCatalog.GetRarity(kind) ==
+                                rarityAndCount.Rarity)
+                        .Where(
+                            kind =>
+                                !CardCatalog.IsPersistent(kind) ||
+                                Player.CanAddCard(kind))
+                        .OrderBy(_ => Random.Next())
+                        .Take(rarityAndCount.Count);
+                    foreach (var kind in selected)
+                    {
+                        stock.Add(new ShopCardStock(nextId++, kind));
+                    }
+                }
+            }
+
+            _shopStocks[CurrentNodeId] = stock;
+            return stock;
+        }
+
+        private HashSet<CardCategory> GetShopUpgradedCategories()
+        {
+            if (!_shopUpgradedCategories.TryGetValue(
+                    CurrentNodeId,
+                    out var categories))
+            {
+                categories = new HashSet<CardCategory>();
+                _shopUpgradedCategories[CurrentNodeId] = categories;
+            }
+
+            return categories;
+        }
+
+        private CardInstance GetUpgradeableCard(int cardId)
+        {
+            return Player.Deck.FirstOrDefault(
+                card =>
+                    card.Id == cardId &&
+                    CardCatalog.CanUpgrade(card));
+        }
+
+        private void EnsureCurrentShop()
+        {
+            if (CurrentNode.Kind != StageKind.Shop)
+            {
+                throw new InvalidOperationException(
+                    "現在地はショップではありません。");
+            }
         }
 
         private IReadOnlyList<CarryToolKind> CreateToolChoices(

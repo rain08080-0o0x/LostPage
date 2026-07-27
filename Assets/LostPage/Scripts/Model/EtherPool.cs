@@ -23,7 +23,7 @@ namespace LostPage
 
             foreach (var card in deck)
             {
-                foreach (var cost in CardCatalog.GetCost(card.Kind))
+                foreach (var cost in CardCatalog.GetCost(card))
                 {
                     Unused[cost.Key] += cost.Value;
                 }
@@ -68,6 +68,18 @@ namespace LostPage
                 Current[pair.Key] -= pair.Value;
                 Spent[pair.Key] += pair.Value;
             }
+        }
+
+        public IReadOnlyDictionary<EtherType, int> PayAllCurrent()
+        {
+            var paid = Current.ToDictionary(pair => pair.Key, pair => pair.Value);
+            foreach (EtherType type in Enum.GetValues(typeof(EtherType)))
+            {
+                Spent[type] += Current[type];
+                Current[type] = 0;
+            }
+
+            return paid;
         }
 
         public List<EtherType> Draw(int count)

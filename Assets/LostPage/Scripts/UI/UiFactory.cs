@@ -270,6 +270,8 @@ namespace LostPage
                     return new Color32(137, 110, 44, 255);
                 case CardCategory.Persistent:
                     return new Color32(91, 55, 122, 255);
+                case CardCategory.Special:
+                    return new Color32(151, 126, 52, 255);
                 default:
                     throw new ArgumentOutOfRangeException(nameof(kind), kind, null);
             }
