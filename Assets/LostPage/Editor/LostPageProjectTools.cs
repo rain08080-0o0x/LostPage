@@ -43,7 +43,7 @@ namespace LostPage.Editor
 
             PlayerSettings.companyName = "LostPagePrototype";
             PlayerSettings.productName = "Lost Page";
-            PlayerSettings.bundleVersion = "1.2.2";
+            PlayerSettings.bundleVersion = "1.2.3";
             PlayerSettings.defaultScreenWidth = 1920;
             PlayerSettings.defaultScreenHeight = 1080;
             PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
@@ -58,7 +58,7 @@ namespace LostPage.Editor
                 "com.lostpage.prototype");
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
             PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevelAuto;
-            PlayerSettings.Android.bundleVersionCode = 8;
+            PlayerSettings.Android.bundleVersionCode = 9;
 
             AssetDatabase.SaveAssets();
             Debug.Log("LOSTPAGE_SETUP_OK");
@@ -1335,6 +1335,78 @@ namespace LostPage.Editor
 
             Require(eventOutcomes.Count == 5, "ランダムイベント5種類");
 
+            var eventBagSession = new RunSession(24601);
+            var eventBagOutcomes = new List<RandomEventKind>();
+            while (eventBagOutcomes.Count < 5)
+            {
+                var eventNodeIds = eventBagSession.Nodes
+                    .Where(
+                        node =>
+                            node.Kind == StageKind.RandomEvent &&
+                            !node.Cleared)
+                    .OrderBy(node => node.Id)
+                    .Select(node => node.Id)
+                    .ToList();
+                foreach (var eventNodeId in eventNodeIds)
+                {
+                    MoveToNode(eventBagSession, eventNodeId);
+                    var eventKind =
+                        eventBagSession.GetCurrentRandomEventKind();
+                    eventBagOutcomes.Add(eventKind);
+                    if (eventKind == RandomEventKind.FreeUpgrade)
+                    {
+                        var card =
+                            eventBagSession.GetUpgradeableCards().First();
+                        Require(
+                            eventBagSession.TryUpgradeCardForFreeEvent(
+                                card.Id),
+                            "抽選袋の無料強化イベント");
+                        eventBagSession.FinishFreeUpgradeEvent();
+                    }
+                    else if (eventKind == RandomEventKind.BloodUpgrade)
+                    {
+                        var card =
+                            eventBagSession.GetUpgradeableCards().First();
+                        Require(
+                            eventBagSession.StartBloodUpgradeEvent(1) &&
+                            eventBagSession.TryUpgradeCardForBloodEvent(
+                                card.Id),
+                            "抽選袋のHP消費強化イベント");
+                    }
+                    else
+                    {
+                        eventBagSession.ResolveCurrentRandomEvent();
+                    }
+
+                    if (eventBagOutcomes.Count >= 5)
+                    {
+                        break;
+                    }
+                }
+
+                if (eventBagOutcomes.Count >= 5)
+                {
+                    break;
+                }
+
+                MoveToBoss(eventBagSession);
+                eventBagSession.CompleteCurrentBattle(1);
+                eventBagSession.AdvanceToNextLayer();
+            }
+
+            Require(
+                eventBagOutcomes.Distinct().Count() == 5,
+                "ランダムイベント抽選袋の5種類一巡");
+            Require(
+                !eventBagOutcomes
+                    .Zip(
+                        eventBagOutcomes.Skip(1),
+                        (current, next) =>
+                            IsUpgradeRandomEvent(current) &&
+                            IsUpgradeRandomEvent(next))
+                    .Any(adjacent => adjacent),
+                "強化系ランダムイベントの連続防止");
+
             var stageRewardSession = new RunSession(101);
             MoveToStage(stageRewardSession, StageKind.Reward);
             var deckCountBeforeReward =
@@ -1483,6 +1555,28 @@ namespace LostPage.Editor
                 fogSession.Player.Hp == 0 &&
                 fogSession.LastTravelFogDamage == 5,
                 "霧ダメージによるHP0");
+            var cappedFogSession = new RunSession(54323);
+            for (var move = 0; move < 20; move++)
+            {
+                cappedFogSession.TravelTo(
+                    cappedFogSession.CurrentNodeId == 0 ? 1 : 0);
+            }
+
+            var cappedFogBoss = cappedFogSession.Nodes.Single(
+                node => node.Kind == StageKind.Boss);
+            Require(
+                cappedFogSession.FogDepth ==
+                    cappedFogSession.MaximumFogDepth &&
+                cappedFogSession.MaximumFogDepth ==
+                    cappedFogBoss.Depth - 1 &&
+                !cappedFogSession.IsNodeInFog(cappedFogBoss),
+                "霧はボス手前で停止しボスを覆わない");
+            var fogDepthAtCap = cappedFogSession.FogDepth;
+            cappedFogSession.TravelTo(
+                cappedFogSession.CurrentNodeId == 0 ? 1 : 0);
+            Require(
+                cappedFogSession.FogDepth == fogDepthAtCap,
+                "上限到達後の移動で霧が進行しない");
 
             var layeredSession = new RunSession(24680);
             layeredSession.Player.Hp = 73;
@@ -1520,7 +1614,8 @@ namespace LostPage.Editor
                         node => node.Kind == StageKind.Start).Depth == 0 &&
                     layeredSession.Nodes.Single(
                         node => node.Kind == StageKind.Boss).Depth ==
-                        rowCount + 1,
+                        rowCount + 1 &&
+                    layeredSession.MaximumFogDepth == rowCount,
                     $"{layer}層の霧ダメージ・開始・ボス深度");
                 Require(
                     layeredSession.Nodes.Count ==
@@ -1600,6 +1695,9 @@ namespace LostPage.Editor
                     bossBattle.Enemies[0].MaxHp ==
                         bossHpByLayer[layer - 1],
                     $"{layer}層のボスHP");
+                var hpBeforeBossClear =
+                    Math.Max(1, layeredSession.Player.MaxHp - 17);
+                layeredSession.Player.Hp = hpBeforeBossClear;
                 var goldBeforeBoss = layeredSession.Player.Gold;
                 var bossReward =
                     layeredSession.CompleteCurrentBattle(
@@ -1614,8 +1712,13 @@ namespace LostPage.Editor
                 var expectedMaxHp = 100 + layer * 10;
                 Require(
                     layeredSession.Player.MaxHp == expectedMaxHp &&
-                    layeredSession.Player.Hp == expectedMaxHp,
-                    $"{layer}層クリア時の最大HP増加と全回復");
+                    layeredSession.Player.Hp ==
+                    (layer < RunSession.MaxLayer
+                        ? expectedMaxHp
+                        : hpBeforeBossClear),
+                    layer < RunSession.MaxLayer
+                        ? $"{layer}層クリア時の最大HP増加と全回復"
+                        : "5層クリア時の最大HP増加と回復なし");
 
                 if (layer < RunSession.MaxLayer)
                 {
@@ -2226,6 +2329,12 @@ namespace LostPage.Editor
                 .ThenBy(node => node.Id)
                 .First()
                 .Id;
+            MoveToNode(session, targetId);
+        }
+
+        private static void MoveToNode(RunSession session, int targetId)
+        {
+            var nodes = session.Nodes.ToDictionary(node => node.Id);
             var previous = new Dictionary<int, int>();
             var visited = new HashSet<int> { session.CurrentNodeId };
             var pending = new Queue<int>();
@@ -2248,7 +2357,7 @@ namespace LostPage.Editor
             if (!visited.Contains(targetId))
             {
                 throw new InvalidOperationException(
-                    $"{targetKind}への経路が見つかりません。");
+                    $"ノード{targetId}への経路が見つかりません。");
             }
 
             var path = new List<int>();
@@ -2264,6 +2373,12 @@ namespace LostPage.Editor
             {
                 session.TravelTo(nodeId);
             }
+        }
+
+        private static bool IsUpgradeRandomEvent(RandomEventKind kind)
+        {
+            return kind == RandomEventKind.FreeUpgrade ||
+                   kind == RandomEventKind.BloodUpgrade;
         }
 
         [MenuItem("Lost Page/Build Windows")]

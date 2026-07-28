@@ -61,7 +61,7 @@ namespace LostPage
             "攻撃カードは対象の敵へドラッグします。敵を選んで使用ボタンを押しても使えます。",
             "防御・チャージ・持続カードは、中央のカード説明欄へドラッグして発動します。",
             "ターンは自動では終わりません。終了時に残ったエーテルを基本2個、鞄があればさらに持ち越せます。",
-            "分岐を選んで進みます。移動ごとに下から霧が1行迫り、霧の中へ入るとHPが減ります。"
+            "分岐を選んで進みます。移動ごとに下から霧が1行迫りますが、ボス手前で止まります。霧の中へ入るとHPが減ります。"
         };
 
         private Canvas _canvas;
@@ -77,6 +77,7 @@ namespace LostPage
         private float _shopScrollX;
         private CardCategory _shopCategory = CardCategory.Attack;
         private CardCategory _ownedCardCategory = CardCategory.Attack;
+        private CardCategory? _upgradeEventCategory;
         private RectTransform _dragGhost;
         private RectTransform _tutorialBookOverlay;
         private int _tutorialPageIndex;
@@ -146,6 +147,7 @@ namespace LostPage
             _selectedCard = null;
             _selectedEnemyIndex = 0;
             _remainingCardRewardSelections = 0;
+            _upgradeEventCategory = null;
             ResetCardBrowsingState();
             _isResolvingAction = false;
             _message = "接続されているステージを選択してください。";
@@ -2582,6 +2584,7 @@ namespace LostPage
 
         private void ShowRandomEvent()
         {
+            _upgradeEventCategory = null;
             var kind = _session.GetCurrentRandomEventKind();
             if (kind == RandomEventKind.FreeUpgrade)
             {
@@ -2613,6 +2616,7 @@ namespace LostPage
                 root,
                 "古い強化台",
                 "カードを最大2枚まで強化できます。1枚強化後に終了することもできます。");
+            DrawUpgradeEventFilterTabs(root, ShowFreeUpgradeEvent);
             DrawEventUpgradeableCards(
                 root,
                 card =>
@@ -2660,6 +2664,7 @@ namespace LostPage
                     "血の強化",
                     $"強化するカードを選択してください。" +
                     $"残り{_session.PendingBloodEventUpgrades}枚");
+                DrawUpgradeEventFilterTabs(root, ShowBloodUpgradeEvent);
                 DrawEventUpgradeableCards(
                     root,
                     card =>
@@ -2742,7 +2747,7 @@ namespace LostPage
                 "EventCards",
                 root,
                 new Vector2(0.05f, 0.18f),
-                new Vector2(0.95f, 0.70f),
+                new Vector2(0.95f, 0.62f),
                 true,
                 false,
                 out var content);
@@ -2757,7 +2762,31 @@ namespace LostPage
             var fitter = content.gameObject.AddComponent<ContentSizeFitter>();
             fitter.horizontalFit = ContentSizeFitter.FitMode.PreferredSize;
             fitter.verticalFit = ContentSizeFitter.FitMode.Unconstrained;
-            foreach (var card in _session.GetUpgradeableCards())
+            var cards = _session.GetUpgradeableCards()
+                .Where(
+                    card =>
+                        !_upgradeEventCategory.HasValue ||
+                        CardCatalog.GetCategory(card.Kind) ==
+                        _upgradeEventCategory.Value)
+                .ToList();
+            if (cards.Count == 0)
+            {
+                var emptyLabel = UiFactory.CreateText(
+                    "NoUpgradeableCards",
+                    content,
+                    Vector2.zero,
+                    Vector2.zero,
+                    "このカテゴリに強化できるカードはありません。",
+                    24);
+                var emptyElement =
+                    emptyLabel.gameObject.AddComponent<LayoutElement>();
+                emptyElement.preferredWidth = 560;
+                emptyElement.minWidth = 560;
+                emptyElement.preferredHeight = 410;
+                return;
+            }
+
+            foreach (var card in cards)
             {
                 var selectedCard = card;
                 var button = UiFactory.CreateButton(
@@ -2776,6 +2805,55 @@ namespace LostPage
                 element.preferredWidth = 320;
                 element.minWidth = 320;
                 element.preferredHeight = 410;
+            }
+        }
+
+        private void DrawUpgradeEventFilterTabs(
+            RectTransform root,
+            Action refresh)
+        {
+            UiFactory.CreateButton(
+                "EventUpgradeFilter_All",
+                root,
+                new Vector2(0.04f, 0.64f),
+                new Vector2(0.20f, 0.71f),
+                "すべて",
+                () =>
+                {
+                    _upgradeEventCategory = null;
+                    refresh();
+                },
+                !_upgradeEventCategory.HasValue
+                    ? UiFactory.Green
+                    : new Color32(72, 81, 104, 255),
+                21);
+
+            var categories = new[]
+            {
+                CardCategory.Attack,
+                CardCategory.Defense,
+                CardCategory.Charge,
+                CardCategory.Persistent
+            };
+            for (var index = 0; index < categories.Length; index++)
+            {
+                var category = categories[index];
+                var left = 0.22f + index * 0.185f;
+                UiFactory.CreateButton(
+                    $"EventUpgradeFilter_{category}",
+                    root,
+                    new Vector2(left, 0.64f),
+                    new Vector2(left + 0.16f, 0.71f),
+                    GetCategoryLabel(category),
+                    () =>
+                    {
+                        _upgradeEventCategory = category;
+                        refresh();
+                    },
+                    _upgradeEventCategory == category
+                        ? UiFactory.Green
+                        : new Color32(72, 81, 104, 255),
+                    21);
             }
         }
 
@@ -3281,6 +3359,9 @@ namespace LostPage
         {
             var root = CreateScreen("VictoryScreen");
             var finalLayer = !_session.HasNextLayer;
+            var layerClearEffect = finalLayer
+                ? "（最大HP+10・回復なし）"
+                : "（最大HP+10・全回復）";
             var bossRewardMessage =
                 finalLayer ? string.Empty : $"\n{_message}";
             UiFactory.CreateText(
@@ -3300,7 +3381,7 @@ namespace LostPage
                 new Vector2(0.20f, 0.38f),
                 new Vector2(0.80f, 0.55f),
                 $"HP {_session.Player.Hp}/{_session.Player.MaxHp}" +
-                "（最大HP+10・全回復）\n" +
+                $"{layerClearEffect}\n" +
                 $"所持カード {_session.Player.Deck.Count}枚　" +
                 $"所持金 {_session.Player.Gold}G\n" +
                 GetOwnedToolSummary() +
@@ -4314,6 +4395,10 @@ namespace LostPage
                 Array.IndexOf(arguments, "-lostPageCaptureFogMap") >= 0;
             var captureRandomEvent =
                 Array.IndexOf(arguments, "-lostPageCaptureRandomEvent") >= 0;
+            var captureUpgradeEventFilter =
+                Array.IndexOf(
+                    arguments,
+                    "-lostPageCaptureUpgradeEventFilter") >= 0;
             var captureRewardStage =
                 Array.IndexOf(arguments, "-lostPageCaptureRewardStage") >= 0;
             var captureShopReentry =
@@ -4512,6 +4597,15 @@ namespace LostPage
                 _session.Player.Hp = 70;
                 TravelToStageForValidation(StageKind.RandomEvent);
                 ShowRandomEvent();
+            }
+
+            if (captureUpgradeEventFilter)
+            {
+                _upgradeEventCategory = null;
+                ShowFreeUpgradeEvent();
+                GameObject.Find("EventUpgradeFilter_Attack")
+                    ?.GetComponent<Button>()
+                    ?.onClick.Invoke();
             }
 
             if (captureRewardStage)
@@ -4921,6 +5015,35 @@ namespace LostPage
             {
                 throw new InvalidOperationException(
                     "使用済みエーテル再利用アニメーションの状態が不正です。");
+            }
+
+            if (captureUpgradeEventFilter)
+            {
+                var upgradeableCards = _session.GetUpgradeableCards();
+                if (GameObject.Find("EventUpgradeFilter_All") == null ||
+                    GameObject.Find("EventUpgradeFilter_Attack") == null ||
+                    !upgradeableCards
+                        .Where(
+                            card =>
+                                CardCatalog.GetCategory(card.Kind) ==
+                                CardCategory.Attack)
+                        .All(
+                            card =>
+                                GameObject.Find(
+                                    $"EventUpgrade_{card.Id}") != null) ||
+                    upgradeableCards
+                        .Where(
+                            card =>
+                                CardCatalog.GetCategory(card.Kind) !=
+                                CardCategory.Attack)
+                        .Any(
+                            card =>
+                                GameObject.Find(
+                                    $"EventUpgrade_{card.Id}") != null))
+                {
+                    throw new InvalidOperationException(
+                        "強化イベントのカテゴリフィルター表示が不正です。");
+                }
             }
 
             if (hiddenPersistentCardId >= 0 &&

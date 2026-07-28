@@ -5,27 +5,27 @@
 毎ターン得られるエーテルはランダムですが、その色と総数は自分のデッキに入れたカードのコストから作られます。強いカードを増やすほど行動の選択肢は広がる一方、必要な色を引ける確率も変わる――デッキ構築と戦闘中のリソース管理が一体になったゲームです。
 
 - 対応環境：Windows 64-bit / Android 8.0以上（ARM64）
-- 最新公開版：v1.2.2
+- 最新公開版：v1.2.3
 - 開発ブランチ：`alpha`
 - 開発環境：Unity 6000.3.12f1
 - 企画・現行仕様：[LostPage企画草案.md](./LostPage企画草案.md)
 
 ## ダウンロード
 
-[GitHub Releases](https://github.com/rain08080-0o0x/LostPage/releases/tag/v1.2.2)から、使用する端末に合ったファイルをダウンロードしてください。
+[GitHub Releases](https://github.com/rain08080-0o0x/LostPage/releases/tag/v1.2.3)から、使用する端末に合ったファイルをダウンロードしてください。
 
-v1.2.2ではAndroid起動時に攻撃エフェクトのスクリプト参照が欠落する問題を修正し、同種の参照切れをAndroidビルド前に検出する検査を追加しました。v1.2.1で追加した全55種類のカード、カード強化、4段階のレア度、炎・出血・反射・敵弱化、特殊カード「神撃」、特殊道具「明星」などのゲーム仕様は引き続き利用できます。
+v1.2.3ではランダムイベント5種類を一巡する抽選方式に変更し、強化イベントの連続発生を防ぎました。無料・HP消費カード強化画面にはカテゴリフィルターを追加しています。また、霧はボス手前で停止し、5層ボス撃破後は最大HPのみ増加して現在HPを回復しない仕様になりました。
 
 | 環境 | ダウンロード | 内容 |
 | --- | --- | --- |
-| Android | [LostPage-v1.2.2-Android.apk](https://github.com/rain08080-0o0x/LostPage/releases/download/v1.2.2/LostPage-v1.2.2-Android.apk) | Android 8.0（API 26）以上、ARM64 |
-| Windows | [LostPage-v1.2.2-Windows.zip](https://github.com/rain08080-0o0x/LostPage/releases/download/v1.2.2/LostPage-v1.2.2-Windows.zip) | 64-bit Windows用の実行ファイル一式 |
+| Android | [LostPage-v1.2.3-Android.apk](https://github.com/rain08080-0o0x/LostPage/releases/download/v1.2.3/LostPage-v1.2.3-Android.apk) | Android 8.0（API 26）以上、ARM64 |
+| Windows | [LostPage-v1.2.3-Windows.zip](https://github.com/rain08080-0o0x/LostPage/releases/download/v1.2.3/LostPage-v1.2.3-Windows.zip) | 64-bit Windows用の実行ファイル一式 |
 
 ## 起動方法
 
 ### Windows
 
-1. `LostPage-v1.2.2-Windows.zip`をダウンロードします。
+1. `LostPage-v1.2.3-Windows.zip`をダウンロードします。
 2. ZIPを右クリックし、「すべて展開」などで任意のフォルダへ展開します。
 3. 展開先にある`LostPage.exe`を起動します。
 
@@ -33,12 +33,12 @@ v1.2.2ではAndroid起動時に攻撃エフェクトのスクリプト参照が�
 
 ### Android
 
-1. `LostPage-v1.2.2-Android.apk`を端末へダウンロードします。
+1. `LostPage-v1.2.3-Android.apk`を端末へダウンロードします。
 2. Androidの案内に従い、使用したブラウザまたはファイル管理アプリに「不明なアプリのインストール」を一時的に許可します。
 3. APKを開いてインストールします。
 4. アプリ一覧から「Lost Page」を起動し、横画面でプレイします。
 
-APK以外の追加ファイルは不要です。v1.2.2のAPKはGitHub配布用のデバッグ証明書で署名されており、Google Play向けの正式署名版ではありません。
+APK以外の追加ファイルは不要です。v1.2.3のAPKはGitHub配布用のデバッグ証明書で署名されており、Google Play向けの正式署名版ではありません。
 
 ## このゲームの面白さ
 
@@ -246,9 +246,9 @@ APK以外の追加ファイルは不要です。v1.2.2のAPKはGitHub配布用�
 - モデル検証処理と画面検証用機能の作成、主要カード・報酬・階層・道具ルールの回帰確認
 - Android端末をADB接続した起動調査とクラッシュ原因の修正、開発版の実機起動確認
 - Windows版の起動確認、Android APKの構成・署名・対応API・CPUアーキテクチャ確認
-- v1.1.1、v1.1.2、v1.1.3、v1.1.4、v1.1.5、v1.1.6、v1.2.1、v1.2.2へのバージョン統一、Development Buildを外したWindows/Androidリリースビルド
+- v1.1.1、v1.1.2、v1.1.3、v1.1.4、v1.1.5、v1.1.6、v1.2.1、v1.2.2、v1.2.3へのバージョン統一、Development Buildを外したWindows/Androidリリースビルド
 - Android APK、Windows ZIPの作成、内容検査、SHA-256照合
-- `.gitignore`、README、公開リポジトリ、Git履歴、GitHub Release v1.1.1・v1.1.2・v1.1.3・v1.1.4・v1.1.5・v1.1.6・v1.2.1・v1.2.2の整備
+- `.gitignore`、README、公開リポジトリ、Git履歴、GitHub Release v1.1.1・v1.1.2・v1.1.3・v1.1.4・v1.1.5・v1.1.6・v1.2.1・v1.2.2・v1.2.3の整備
 - 本READMEと企画・現行仕様書の整理
 
 ## 主なコード構成
@@ -286,7 +286,7 @@ AndroidビルドにはUnity HubからAndroid Build Support、SDK、NDK、OpenJDK
 - セーブ機能は未実装です。戦闘中・マップ進行中とも、アプリを終了するとランを再開できません。
 - バフ・デバフのアイコンは表示されますが、タップして詳細を開く機能は未実装です。
 - 攻撃・エーテル移動・HP被ダメ時の画面揺れ以外のキャラクター演出、ストーリー、音楽・効果音は現段階では用意されていません。
-- v1.2.2のAndroid APKはデバッグ証明書で署名されています。
+- v1.2.3のAndroid APKはデバッグ証明書で署名されています。
 - ゲームバランスと表示は開発中のため、今後変更される可能性があります。
 
 ## ライセンス

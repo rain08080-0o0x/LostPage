@@ -929,8 +929,13 @@ namespace LostPage
 
         public void IncreaseMaxHpAndHealToFull(int amount)
         {
-            MaxHp += amount;
+            IncreaseMaxHp(amount);
             Hp = MaxHp;
+        }
+
+        public void IncreaseMaxHp(int amount)
+        {
+            MaxHp += amount;
         }
 
         public int Heal(int amount)

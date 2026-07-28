@@ -165,6 +165,9 @@ namespace LostPage
                 new Dictionary<int, HashSet<CardCategory>>();
         private readonly Dictionary<int, RandomEventKind> _randomEvents =
             new Dictionary<int, RandomEventKind>();
+        private readonly List<RandomEventKind> _remainingRandomEventKinds =
+            new List<RandomEventKind>();
+        private RandomEventKind? _lastRandomEventKind;
         private int _freeEventUpgrades;
         private int _pendingBloodEventUpgrades;
 
@@ -218,6 +221,8 @@ namespace LostPage
         public float MapContentWidth => _nodes.Values.Max(node => node.X) + 300f;
         public float MapContentHeight => _nodes.Values.Max(node => node.Y) + 200f;
         public int CurrentFogDamage => 5 + (CurrentLayer - 1) * 2;
+        public int MaximumFogDepth =>
+            _nodes.Values.Single(node => node.Kind == StageKind.Boss).Depth - 1;
         public int ShopUpgradePrice => 30 + (CurrentLayer - 1) * 5;
         public int PendingBloodEventUpgrades =>
             _pendingBloodEventUpgrades;
@@ -245,7 +250,7 @@ namespace LostPage
 
             var firstVisit = !_nodes[nodeId].Visited;
             MapMoveCount++;
-            FogDepth++;
+            FogDepth = Math.Min(FogDepth + 1, MaximumFogDepth);
             CurrentNodeId = nodeId;
             LastTravelFogDamage = IsNodeInFog(CurrentNode)
                 ? Player.LoseHp(CurrentFogDamage)
@@ -273,7 +278,14 @@ namespace LostPage
             if (CurrentNode.Kind == StageKind.Boss &&
                 !CurrentNode.Cleared)
             {
-                Player.IncreaseMaxHpAndHealToFull(10);
+                if (HasNextLayer)
+                {
+                    Player.IncreaseMaxHpAndHealToFull(10);
+                }
+                else
+                {
+                    Player.IncreaseMaxHp(10);
+                }
             }
 
             var reward = 0;
@@ -461,29 +473,103 @@ namespace LostPage
                 return selected;
             }
 
-            var candidates = new List<RandomEventKind>
+            var upgradableCount =
+                Player.Deck.Count(CardCatalog.CanUpgrade);
+            var eligibleKinds = new HashSet<RandomEventKind>
             {
                 RandomEventKind.FoundGold,
                 RandomEventKind.Rest,
                 RandomEventKind.TrapTreasure
             };
-            var upgradableCount =
-                Player.Deck.Count(CardCatalog.CanUpgrade);
+
             if (upgradableCount > 0)
             {
-                candidates.Add(RandomEventKind.FreeUpgrade);
+                eligibleKinds.Add(RandomEventKind.FreeUpgrade);
+                if (Player.Hp > 6)
+                {
+                    eligibleKinds.Add(RandomEventKind.BloodUpgrade);
+                }
             }
 
-            if (upgradableCount > 0 && Player.Hp > 6)
+            _remainingRandomEventKinds.RemoveAll(
+                kind => !eligibleKinds.Contains(kind));
+            if (_remainingRandomEventKinds.Count == 0)
             {
-                candidates.Add(RandomEventKind.BloodUpgrade);
+                RefillRandomEventBag(eligibleKinds);
             }
 
-            selected = candidates[Random.Next(candidates.Count)];
+            selected = _remainingRandomEventKinds[0];
+            _remainingRandomEventKinds.RemoveAt(0);
+            _lastRandomEventKind = selected;
             _randomEvents[CurrentNodeId] = selected;
             _freeEventUpgrades = 0;
             _pendingBloodEventUpgrades = 0;
             return selected;
+        }
+
+        private void RefillRandomEventBag(
+            IReadOnlyCollection<RandomEventKind> eligibleKinds)
+        {
+            var basicKinds = new List<RandomEventKind>
+            {
+                RandomEventKind.FoundGold,
+                RandomEventKind.Rest,
+                RandomEventKind.TrapTreasure
+            };
+            basicKinds.RemoveAll(kind => !eligibleKinds.Contains(kind));
+            Shuffle(basicKinds);
+
+            var upgradeKinds = new List<RandomEventKind>
+            {
+                RandomEventKind.FreeUpgrade,
+                RandomEventKind.BloodUpgrade
+            };
+            upgradeKinds.RemoveAll(kind => !eligibleKinds.Contains(kind));
+            Shuffle(upgradeKinds);
+
+            var gaps = Enumerable.Range(0, basicKinds.Count + 1).ToList();
+            if (_lastRandomEventKind.HasValue &&
+                IsUpgradeRandomEvent(_lastRandomEventKind.Value))
+            {
+                gaps.Remove(0);
+            }
+
+            Shuffle(gaps);
+            var upgradesByGap = new Dictionary<int, RandomEventKind>();
+            for (var index = 0; index < upgradeKinds.Count; index++)
+            {
+                upgradesByGap[gaps[index]] = upgradeKinds[index];
+            }
+
+            for (var gap = 0; gap <= basicKinds.Count; gap++)
+            {
+                if (upgradesByGap.TryGetValue(gap, out var upgradeKind))
+                {
+                    _remainingRandomEventKinds.Add(upgradeKind);
+                }
+
+                if (gap < basicKinds.Count)
+                {
+                    _remainingRandomEventKinds.Add(basicKinds[gap]);
+                }
+            }
+        }
+
+        private void Shuffle<T>(IList<T> items)
+        {
+            for (var index = items.Count - 1; index > 0; index--)
+            {
+                var swapIndex = Random.Next(index + 1);
+                var value = items[index];
+                items[index] = items[swapIndex];
+                items[swapIndex] = value;
+            }
+        }
+
+        private static bool IsUpgradeRandomEvent(RandomEventKind kind)
+        {
+            return kind == RandomEventKind.FreeUpgrade ||
+                   kind == RandomEventKind.BloodUpgrade;
         }
 
         public IReadOnlyList<CardInstance> GetUpgradeableCards()
