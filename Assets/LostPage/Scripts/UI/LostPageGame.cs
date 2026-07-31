@@ -990,14 +990,13 @@ namespace LostPage
             var visibleCards = GetSortedVisibleCards();
             for (var index = 0; index < visibleCards.Count; index++)
             {
-                var cardIndex = index;
                 var card = visibleCards[index];
                 var usable = _battle.CanUse(card);
                 var selected = _selectedCard != null && _selectedCard.Id == card.Id;
                 var cardColor = usable
                     ? UiFactory.GetCardColor(card.Kind)
                     : UiFactory.Disabled;
-                if (selected)
+                if (selected && usable)
                 {
                     cardColor = Color.Lerp(cardColor, UiFactory.Accent, 0.34f);
                 }
@@ -1011,12 +1010,8 @@ namespace LostPage
                     content,
                     Vector2.zero,
                     Vector2.zero,
-                    $"#{cardIndex + 1}　" +
-                    $"{(card.IsUpgraded ? "【強化済】" : string.Empty)}" +
-                    $"{CardCatalog.GetName(card.Kind)}\n" +
-                    $"【{CardCatalog.GetRarityLabel(card.Kind)}】\n" +
-                    $"{CardCatalog.GetShortDescription(card)}\n" +
-                    $"コスト：{CardCatalog.GetCostText(card)}\n" +
+                    $"{CardCatalog.GetName(card.Kind)}\n\n" +
+                    $"使用エーテル：{CardCatalog.GetCostText(card)}\n" +
                     $"{cooldownLabel}{cooldownState}",
                     () =>
                     {
@@ -1024,11 +1019,12 @@ namespace LostPage
                         ShowBattle();
                     },
                     cardColor,
-                    21);
+                    24);
                 var layoutElement = button.gameObject.AddComponent<LayoutElement>();
                 layoutElement.preferredWidth = 250;
                 layoutElement.minWidth = 250;
                 layoutElement.preferredHeight = 225;
+                DrawCardAvailabilityOverlay(button, card);
                 button.gameObject.AddComponent<CardDragHandler>().Configure(
                     () => _battle != null && _battle.CanUse(card),
                     eventData => BeginCardDrag(card, eventData),
@@ -1041,6 +1037,65 @@ namespace LostPage
             Canvas.ForceUpdateCanvases();
             scroll.horizontalNormalizedPosition = _cardScrollX;
             scroll.onValueChanged.AddListener(value => _cardScrollX = value.x);
+        }
+
+        private void DrawCardAvailabilityOverlay(
+            Button button,
+            CardInstance card)
+        {
+            Sprite sprite;
+            string overlayName;
+            if (card.CooldownRemaining > 0)
+            {
+                sprite = CardAvailabilityTextureSet.GetCooldownSprite(
+                    card.CooldownRemaining);
+                overlayName = $"CardAvailabilityOverlay_CT_{card.Id}";
+            }
+            else if (IsCardUnavailableFromEther(card))
+            {
+                sprite = CardAvailabilityTextureSet.GetNotUseSprite();
+                overlayName = $"CardAvailabilityOverlay_NotUse_{card.Id}";
+            }
+            else
+            {
+                return;
+            }
+
+            if (sprite == null)
+            {
+                return;
+            }
+
+            var backdrop = UiFactory.CreatePanel(
+                $"CardAvailabilityBackdrop_{card.Id}",
+                button.transform,
+                Vector2.zero,
+                Vector2.one,
+                new Color(0f, 0f, 0f, 0.35f));
+            backdrop.GetComponent<Image>().raycastTarget = false;
+
+            var overlay = UiFactory.CreateRect(
+                overlayName,
+                button.transform,
+                Vector2.zero,
+                Vector2.one);
+            var image = overlay.gameObject.AddComponent<Image>();
+            image.sprite = sprite;
+            image.preserveAspect = true;
+            image.color = Color.white;
+            image.raycastTarget = false;
+        }
+
+        private bool IsCardUnavailableFromEther(CardInstance card)
+        {
+            if (CardCatalog.IsOncePerBattle(card) && card.UsedThisBattle)
+            {
+                return false;
+            }
+
+            return card.Kind == CardKind.DivineStrike
+                ? _battle.Pool.CurrentTotal == 0
+                : !_battle.Pool.CanPay(CardCatalog.GetCost(card));
         }
 
         private void DrawCardFilterButton(

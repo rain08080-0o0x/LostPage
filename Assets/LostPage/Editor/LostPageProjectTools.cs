@@ -32,6 +32,7 @@ namespace LostPage.Editor
                 NewSceneMode.Single);
             scene.name = "Main";
             CreateEtherTextureSet();
+            CreateCardAvailabilityTextureSet();
             CreateTutorialPageSet();
             CreateAttackEffectSet();
             EditorSceneManager.SaveScene(scene, MainScenePath);
@@ -43,7 +44,7 @@ namespace LostPage.Editor
 
             PlayerSettings.companyName = "LostPagePrototype";
             PlayerSettings.productName = "Lost Page";
-            PlayerSettings.bundleVersion = "1.2.3";
+            PlayerSettings.bundleVersion = "1.2.4";
             PlayerSettings.defaultScreenWidth = 1920;
             PlayerSettings.defaultScreenHeight = 1080;
             PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
@@ -58,7 +59,7 @@ namespace LostPage.Editor
                 "com.lostpage.prototype");
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
             PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevelAuto;
-            PlayerSettings.Android.bundleVersionCode = 9;
+            PlayerSettings.Android.bundleVersionCode = 10;
 
             AssetDatabase.SaveAssets();
             Debug.Log("LOSTPAGE_SETUP_OK");
@@ -76,6 +77,23 @@ namespace LostPage.Editor
             CreateSpriteReference(textureObject.transform, "EtherTexture_Blue", blue);
             CreateSpriteReference(textureObject.transform, "EtherTexture_Yellow", yellow);
             CreateSpriteReference(textureObject.transform, "EtherTexture_Purple", purple);
+        }
+
+        private static void CreateCardAvailabilityTextureSet()
+        {
+            var textureObject = new GameObject("CardAvailabilityTextureSet");
+            for (var cooldown = 1; cooldown <= 8; cooldown++)
+            {
+                CreateSpriteReference(
+                    textureObject.transform,
+                    $"CardAvailability_CT_{cooldown}",
+                    ImportSprite($"{EtherTextureRoot}/CT_{cooldown}.png"));
+            }
+
+            CreateSpriteReference(
+                textureObject.transform,
+                "CardAvailability_NotUse",
+                ImportSprite($"{EtherTextureRoot}/NotUse.png"));
         }
 
         private static void CreateTutorialPageSet()
@@ -216,6 +234,19 @@ namespace LostPage.Editor
                 attackEffectFrame != null,
                 "攻撃エフェクトの横5フレーム分割");
             UnityEngine.Object.DestroyImmediate(attackEffectFrame);
+
+            for (var cooldown = 1; cooldown <= 8; cooldown++)
+            {
+                Require(
+                    AssetDatabase.LoadAssetAtPath<Sprite>(
+                        $"{EtherTextureRoot}/CT_{cooldown}.png") != null,
+                    $"残りクールタイム{cooldown}画像");
+            }
+
+            Require(
+                AssetDatabase.LoadAssetAtPath<Sprite>(
+                    $"{EtherTextureRoot}/NotUse.png") != null,
+                "エーテル不足画像");
 
             var session = new RunSession(12345);
             Require(session.Player.MaxHp == 100, "プレイヤー最大HP");
