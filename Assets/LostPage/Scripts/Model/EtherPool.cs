@@ -119,6 +119,39 @@ namespace LostPage
             return drawn;
         }
 
+        internal List<EtherType> DrawPreset(
+            IReadOnlyList<EtherType> etherTypes)
+        {
+            if (etherTypes == null)
+            {
+                throw new ArgumentNullException(nameof(etherTypes));
+            }
+
+            _lastRefilledEtherTypes.Clear();
+            LastRefillDrawIndex = -1;
+            var drawn = new List<EtherType>();
+            foreach (var type in etherTypes)
+            {
+                if (Unused.Values.Sum() == 0)
+                {
+                    RecordRefill(drawn.Count);
+                    RefillUnused();
+                }
+
+                if (Unused[type] <= 0)
+                {
+                    throw new InvalidOperationException(
+                        $"{CardCatalog.GetEtherName(type)}エーテルを固定配布できません。");
+                }
+
+                Unused[type]--;
+                Current[type]++;
+                drawn.Add(type);
+            }
+
+            return drawn;
+        }
+
         public EtherType ConvertCurrentToRandomTypeAndAdd(int addedCount)
         {
             var selected = (EtherType)_random.Next(

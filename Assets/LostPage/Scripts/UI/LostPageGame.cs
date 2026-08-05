@@ -13,11 +13,25 @@ namespace LostPage
         private enum TutorialStep
         {
             None,
-            Attack,
-            EndTurn,
-            Carry,
-            Charge
+            Welcome,
+            AttackIntroduction,
+            AttackExplanation,
+            AttackFocus,
+            AttackSuccess,
+            EtherExplanation,
+            UsedEtherExplanation,
+            GuardWarning,
+            GuardFocus,
+            NoUsableCards,
+            EndTurnFocus,
+            CarryExplanation,
+            EnemyTurnExplanation,
+            EnemyTurnResolving,
+            RefillExplanation,
+            FinalMessage
         }
+
+        private const int TutorialTargetEnemyIndex = 1;
 
         private enum CardSortMode
         {
@@ -560,9 +574,23 @@ namespace LostPage
 
         private void StartBattle()
         {
-            _battle = _session.CreateBattleForCurrentNode();
+            var startsTutorial =
+                !_tutorialCompletedThisSession &&
+                !_tutorialOfferedThisSession &&
+                _session.CurrentNode.Kind == StageKind.Battle;
+            if (startsTutorial)
+            {
+                _tutorialOfferedThisSession = true;
+                _tutorialStep = TutorialStep.Welcome;
+            }
+
+            _battle = startsTutorial
+                ? _session.CreateTutorialBattleForCurrentNode()
+                : _session.CreateBattleForCurrentNode();
             _selectedCard = _session.Player.Deck.FirstOrDefault();
-            _selectedEnemyIndex = FindFirstAliveEnemy();
+            _selectedEnemyIndex = startsTutorial
+                ? TutorialTargetEnemyIndex
+                : FindFirstAliveEnemy();
             _cardScrollX = 0f;
             var startMessages = new List<string>();
             if (!string.IsNullOrEmpty(_battle.BattleStartMessage))
@@ -580,22 +608,19 @@ namespace LostPage
                 $"{_session.Player.GetEtherDrawCount()}個取得。");
             _message = string.Join("\n", startMessages);
             ShowBattle();
-            var showTutorialAfterDraw =
-                !_tutorialCompletedThisSession &&
-                !_tutorialOfferedThisSession;
             StartTurnEtherDrawAnimation(
                 () =>
                 {
-                    if (showTutorialAfterDraw)
+                    if (startsTutorial)
                     {
-                        ShowTutorialWelcome();
+                        ShowCurrentTutorialDialog();
                     }
                 });
         }
 
         private void ShowBattle()
         {
-            EnsureTutorialCardCostForCurrentStep();
+            PrepareTutorialSelection();
             if (_selectedCard == null ||
                 !ShouldDisplayCardInCurrentFilter(_selectedCard))
             {
@@ -656,7 +681,7 @@ namespace LostPage
             DrawCardDetails(root);
             DrawCardRow(root);
             DrawPlayerStatus(root);
-            DrawTutorialGuide(root);
+            DrawTutorialFocus(root);
         }
 
         private void DrawEnemies(RectTransform root)
@@ -1026,7 +1051,7 @@ namespace LostPage
                 layoutElement.preferredHeight = 225;
                 DrawCardAvailabilityOverlay(button, card);
                 button.gameObject.AddComponent<CardDragHandler>().Configure(
-                    () => _battle != null && _battle.CanUse(card),
+                    () => CanDragCard(card),
                     eventData => BeginCardDrag(card, eventData),
                     UpdateCardDrag,
                     eventData => EndCardDrag(card, eventData),
@@ -1462,80 +1487,203 @@ namespace LostPage
                 28);
         }
 
-        private void DrawTutorialGuide(RectTransform root)
+        private void PrepareTutorialSelection()
         {
-            if (_tutorialStep == TutorialStep.None)
+            if (_tutorialStep == TutorialStep.AttackExplanation ||
+                _tutorialStep == TutorialStep.AttackFocus)
+            {
+                _selectedCard = _session.Player.Deck
+                    .First(card => card.Kind == CardKind.Attack);
+                _selectedEnemyIndex = TutorialTargetEnemyIndex;
+                _cardFilterMode = CardFilterMode.All;
+                _cardScrollX = 0f;
+            }
+            else if (_tutorialStep == TutorialStep.GuardFocus)
+            {
+                _selectedCard = _session.Player.Deck
+                    .First(card => card.Kind == CardKind.Defense);
+                _cardFilterMode = CardFilterMode.All;
+                _cardScrollX = 0f;
+            }
+        }
+
+        private void DrawTutorialFocus(RectTransform root)
+        {
+            if (!RequiresTutorialFocus(_tutorialStep))
             {
                 return;
             }
 
-            string title;
-            string instruction;
+            UiFactory.CreatePanel(
+                "TutorialFocusOverlay",
+                root,
+                Vector2.zero,
+                Vector2.one,
+                new Color(0.08f, 0.08f, 0.10f, 0.78f));
+            Canvas.ForceUpdateCanvases();
+
             switch (_tutorialStep)
             {
-                case TutorialStep.Attack:
-                    title = "ガイド 1/4　攻撃";
-                    instruction =
-                        "攻撃カードを敵へドラッグしてください。\n" +
-                        "カード選択後の使用ボタンでも進められます。";
+                case TutorialStep.AttackExplanation:
+                    PromoteTutorialObject(root, "CardScroll");
+                    PromoteTutorialObject(
+                        root,
+                        $"Enemy_{TutorialTargetEnemyIndex}");
                     break;
-                case TutorialStep.EndTurn:
-                    title = "ガイド 2/4　ターン終了";
-                    instruction =
-                        "右下の「ターン終了」を押してください。\n" +
-                        "エーテルがなくても自動終了はしません。";
+                case TutorialStep.AttackFocus:
+                    PromoteTutorialObject(
+                        root,
+                        $"Card_{_selectedCard.Id}");
+                    PromoteTutorialObject(root, "UseCard");
+                    PromoteTutorialObject(
+                        root,
+                        $"Enemy_{TutorialTargetEnemyIndex}");
+                    DrawTutorialArrow(root);
                     break;
-                case TutorialStep.Carry:
-                    title = "ガイド 3/4　持ち越し";
-                    instruction =
-                        $"次のターンへ残すエーテルを" +
-                        $"{_session.Player.GetCarryLimit()}個まで選びます。";
+                case TutorialStep.GuardFocus:
+                    PromoteTutorialObject(
+                        root,
+                        $"Card_{_selectedCard.Id}");
+                    PromoteTutorialObject(root, "UseCard");
                     break;
-                case TutorialStep.Charge:
-                    title = "ガイド 4/4　チャージ";
-                    instruction =
-                        "チャージカードを中央の説明欄へドラッグしてください。";
+                case TutorialStep.EndTurnFocus:
+                    PromoteCurrentEther(root);
+                    PromoteTutorialObject(root, "EndTurn");
                     break;
-                default:
-                    return;
+                case TutorialStep.EtherExplanation:
+                case TutorialStep.CarryExplanation:
+                    PromoteCurrentEther(root);
+                    break;
+            }
+        }
+
+        private static bool RequiresTutorialFocus(TutorialStep step)
+        {
+            return step == TutorialStep.AttackExplanation ||
+                   step == TutorialStep.AttackFocus ||
+                   step == TutorialStep.EtherExplanation ||
+                   step == TutorialStep.GuardFocus ||
+                   step == TutorialStep.EndTurnFocus ||
+                   step == TutorialStep.CarryExplanation;
+        }
+
+        private static Transform FindTutorialObject(
+            RectTransform root,
+            string objectName)
+        {
+            return root
+                .GetComponentsInChildren<Transform>(true)
+                .FirstOrDefault(candidate => candidate.name == objectName);
+        }
+
+        private static void PromoteTutorialObject(
+            RectTransform root,
+            string objectName)
+        {
+            var target = FindTutorialObject(root, objectName);
+            if (target == null)
+            {
+                return;
             }
 
-            var panel = UiFactory.CreatePanel(
-                "TutorialGuide",
+            var canvas = target.gameObject.AddComponent<Canvas>();
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 20;
+            target.gameObject.AddComponent<GraphicRaycaster>();
+        }
+
+        private static void PromoteCurrentEther(RectTransform root)
+        {
+            PromoteTutorialObject(root, "CurrentEther");
+            PromoteTutorialObject(root, "EtherTitle");
+            foreach (EtherType type in Enum.GetValues(typeof(EtherType)))
+            {
+                PromoteTutorialObject(root, $"CurrentEtherIcon_{type}");
+                PromoteTutorialObject(root, $"CurrentEtherCount_{type}");
+            }
+        }
+
+        private void DrawTutorialArrow(RectTransform root)
+        {
+            var sprite = TutorialPageSet.GetArrow();
+            var from = FindTutorialObject(root, $"Card_{_selectedCard.Id}")
+                as RectTransform;
+            var to = FindTutorialObject(
                 root,
-                new Vector2(0.70f, 0.11f),
-                new Vector2(0.97f, 0.235f),
-                new Color32(53, 60, 83, 255));
-            UiFactory.CreateText(
-                "Title",
-                panel,
-                new Vector2(0.04f, 0.62f),
-                new Vector2(0.72f, 0.96f),
-                title,
-                20,
-                TextAnchor.MiddleLeft,
-                UiFactory.Accent);
-            UiFactory.CreateText(
-                "Instruction",
-                panel,
-                new Vector2(0.04f, 0.06f),
-                new Vector2(0.72f, 0.64f),
-                instruction,
-                17,
-                TextAnchor.MiddleLeft);
-            UiFactory.CreateButton(
-                "SkipTutorial",
-                panel,
-                new Vector2(0.75f, 0.18f),
-                new Vector2(0.96f, 0.82f),
-                "スキップ",
-                SkipContextTutorial,
-                new Color32(91, 84, 79, 255),
-                16);
+                $"Enemy_{TutorialTargetEnemyIndex}") as RectTransform;
+            if (sprite == null || from == null || to == null)
+            {
+                return;
+            }
+
+            var fromScreen = RectTransformUtility.WorldToScreenPoint(
+                null,
+                from.TransformPoint(from.rect.center));
+            var toScreen = RectTransformUtility.WorldToScreenPoint(
+                null,
+                to.TransformPoint(to.rect.center));
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                root,
+                fromScreen,
+                null,
+                out var fromPoint);
+            RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                root,
+                toScreen,
+                null,
+                out var toPoint);
+
+            var direction = toPoint - fromPoint;
+            var arrow = UiFactory.CreateRect(
+                "TutorialArrow",
+                root,
+                new Vector2(0.5f, 0.5f),
+                new Vector2(0.5f, 0.5f));
+            arrow.pivot = new Vector2(0.5f, 0.5f);
+            arrow.anchoredPosition = (fromPoint + toPoint) * 0.5f;
+            arrow.sizeDelta = new Vector2(direction.magnitude * 0.72f, 64f);
+            arrow.localEulerAngles = new Vector3(
+                0f,
+                0f,
+                Mathf.Atan2(direction.y, direction.x) * Mathf.Rad2Deg);
+            var image = arrow.gameObject.AddComponent<Image>();
+            image.sprite = sprite;
+            image.preserveAspect = false;
+            image.raycastTarget = false;
+            var canvas = arrow.gameObject.AddComponent<Canvas>();
+            canvas.overrideSorting = true;
+            canvas.sortingOrder = 30;
+        }
+
+        private bool CanDragCard(CardInstance card)
+        {
+            if (_battle == null || !_battle.CanUse(card))
+            {
+                return false;
+            }
+
+            if (_tutorialStep == TutorialStep.None)
+            {
+                return true;
+            }
+
+            return _tutorialStep == TutorialStep.AttackFocus &&
+                   card.Kind == CardKind.Attack;
         }
 
         private void OnEndTurnPressed()
         {
+            if (_tutorialStep == TutorialStep.EndTurnFocus)
+            {
+                ShowTutorialStep(TutorialStep.CarryExplanation, true);
+                return;
+            }
+
+            if (_tutorialStep != TutorialStep.None)
+            {
+                return;
+            }
+
             ShowCarrySelection();
         }
 
@@ -1544,6 +1692,30 @@ namespace LostPage
             if (_isResolvingAction ||
                 _selectedCard == null ||
                 !_battle.CanUse(_selectedCard))
+            {
+                return;
+            }
+
+            if (_tutorialStep == TutorialStep.AttackFocus)
+            {
+                if (_selectedCard.Kind != CardKind.Attack ||
+                    _selectedEnemyIndex != TutorialTargetEnemyIndex)
+                {
+                    return;
+                }
+
+                HideTutorialFocus();
+            }
+            else if (_tutorialStep == TutorialStep.GuardFocus)
+            {
+                if (_selectedCard.Kind != CardKind.Defense)
+                {
+                    return;
+                }
+
+                HideTutorialFocus();
+            }
+            else if (_tutorialStep != TutorialStep.None)
             {
                 return;
             }
@@ -2179,7 +2351,7 @@ namespace LostPage
                 return;
             }
 
-            var completedTutorial = AdvanceTutorialAfterCard(usedKind);
+            var showTutorialDialog = AdvanceTutorialAfterCard(usedKind);
             if (!IsSelectedEnemyAlive())
             {
                 _selectedEnemyIndex = FindFirstAliveEnemy();
@@ -2191,9 +2363,9 @@ namespace LostPage
             }
 
             ShowBattle();
-            if (completedTutorial)
+            if (showTutorialDialog)
             {
-                ShowTutorialCompletion();
+                ShowCurrentTutorialDialog();
             }
         }
 
@@ -2201,6 +2373,12 @@ namespace LostPage
             CardInstance card,
             PointerEventData eventData)
         {
+            if (_tutorialStep == TutorialStep.AttackFocus &&
+                card.Kind == CardKind.Attack)
+            {
+                HideTutorialFocus();
+            }
+
             if (_dragGhost != null)
             {
                 Destroy(_dragGhost.gameObject);
@@ -2257,6 +2435,15 @@ namespace LostPage
             {
                 var enemyTarget =
                     dropObject?.GetComponentInParent<EnemyCardDropTarget>();
+                if (_tutorialStep == TutorialStep.AttackFocus &&
+                    (enemyTarget == null ||
+                     enemyTarget.EnemyIndex != TutorialTargetEnemyIndex))
+                {
+                    _message = "ハイライトされた右側の敵へ攻撃してください。";
+                    ShowBattle();
+                    return;
+                }
+
                 if (enemyTarget != null)
                 {
                     _selectedEnemyIndex = enemyTarget.EnemyIndex;
@@ -2283,6 +2470,21 @@ namespace LostPage
             ShowBattle();
         }
 
+        private void HideTutorialFocus()
+        {
+            var focus = FindTutorialObject(_screenRoot, "TutorialFocusOverlay");
+            if (focus != null)
+            {
+                focus.gameObject.SetActive(false);
+            }
+
+            var arrow = FindTutorialObject(_screenRoot, "TutorialArrow");
+            if (arrow != null)
+            {
+                arrow.gameObject.SetActive(false);
+            }
+        }
+
         private void ShowCarrySelection()
         {
             CancelInvoke();
@@ -2300,11 +2502,6 @@ namespace LostPage
                 return;
             }
 
-            if (_tutorialStep == TutorialStep.EndTurn)
-            {
-                _tutorialStep = TutorialStep.Carry;
-            }
-
             var overlay = CreateOverlay("CarryOverlay");
             var dialog = UiFactory.CreatePanel(
                 "Dialog",
@@ -2319,28 +2516,6 @@ namespace LostPage
                 new Vector2(0.95f, 0.96f),
                 $"次のターンへ持ち越すエーテルを{required}個選択",
                 31);
-
-            if (_tutorialStep == TutorialStep.Carry)
-            {
-                UiFactory.CreateText(
-                    "TutorialCarryHint",
-                    dialog,
-                    new Vector2(0.06f, 0.68f),
-                    new Vector2(0.74f, 0.79f),
-                    $"ガイド 3/4：残したいエーテルを{required}個選びます。",
-                    20,
-                    TextAnchor.MiddleLeft,
-                    UiFactory.Accent);
-                UiFactory.CreateButton(
-                    "SkipTutorial",
-                    dialog,
-                    new Vector2(0.78f, 0.82f),
-                    new Vector2(0.95f, 0.95f),
-                    "スキップ",
-                    SkipContextTutorial,
-                    new Color32(91, 84, 79, 255),
-                    17);
-            }
 
             var tokenArea = UiFactory.CreateRect(
                 "Tokens",
@@ -2432,11 +2607,6 @@ namespace LostPage
                 "キャンセル",
                 () =>
                 {
-                    if (_tutorialStep == TutorialStep.Carry)
-                    {
-                        _tutorialStep = TutorialStep.EndTurn;
-                    }
-
                     Destroy(overlay.gameObject);
                     ShowBattle();
                 },
@@ -2451,9 +2621,8 @@ namespace LostPage
                 return;
             }
 
-            var advanceToCharge =
-                _tutorialStep == TutorialStep.EndTurn ||
-                _tutorialStep == TutorialStep.Carry;
+            var showTutorialRefill =
+                _tutorialStep == TutorialStep.EnemyTurnResolving;
             var hpBeforeEnemyTurn = _session.Player.Hp;
             _message = _battle.EndPlayerTurn(carried);
             if (_session.Player.Hp < hpBeforeEnemyTurn)
@@ -2465,14 +2634,14 @@ namespace LostPage
                     PrepareTurnEtherDrawDisplay();
                 }
 
-                StartCoroutine(ShakeThenFinishTurn(advanceToCharge));
+                StartCoroutine(ShakeThenFinishTurn(showTutorialRefill));
                 return;
             }
 
-            FinishCompletedTurn(advanceToCharge);
+            FinishCompletedTurn(showTutorialRefill);
         }
 
-        private IEnumerator ShakeThenFinishTurn(bool advanceToCharge)
+        private IEnumerator ShakeThenFinishTurn(bool showTutorialRefill)
         {
             var blocker = CreateOverlay("EnemyActionBlocker");
             blocker.GetComponent<Image>().color = new Color(0f, 0f, 0f, 0f);
@@ -2501,10 +2670,10 @@ namespace LostPage
             }
 
             _isResolvingAction = false;
-            FinishCompletedTurn(advanceToCharge);
+            FinishCompletedTurn(showTutorialRefill);
         }
 
-        private void FinishCompletedTurn(bool advanceToCharge)
+        private void FinishCompletedTurn(bool showTutorialRefill)
         {
             if (_battle.Phase == BattlePhase.Defeat)
             {
@@ -2518,19 +2687,18 @@ namespace LostPage
                 return;
             }
 
-            if (advanceToCharge)
+            if (showTutorialRefill)
             {
-                _tutorialStep = TutorialStep.Charge;
-                EnsureTutorialCardCost(CardKind.Charge);
+                _tutorialStep = TutorialStep.RefillExplanation;
             }
 
             ShowBattle();
             StartTurnEtherDrawAnimation(
                 () =>
                 {
-                    if (advanceToCharge)
+                    if (showTutorialRefill)
                     {
-                        ShowBattle();
+                        ShowCurrentTutorialDialog();
                     }
                 });
         }
@@ -3516,169 +3684,223 @@ namespace LostPage
                 27);
         }
 
-        private void ShowTutorialWelcome()
+        private void ShowCurrentTutorialDialog()
         {
-            _tutorialOfferedThisSession = true;
-            var overlay = CreateOverlay("TutorialWelcomeOverlay");
+            string message;
+            Sprite illustration = null;
+            switch (_tutorialStep)
+            {
+                case TutorialStep.Welcome:
+                    message = "LostPageのチュートリアルへ、ようこそ！";
+                    break;
+                case TutorialStep.AttackIntroduction:
+                    message = "まずは攻撃の仕方。";
+                    break;
+                case TutorialStep.AttackExplanation:
+                    message =
+                        "画面中部にある使用できるカードを敵へ" +
+                        "ドラッグor使用を押そう！\n" +
+                        "ハイライトされているのが敵だ！";
+                    break;
+                case TutorialStep.AttackSuccess:
+                    message = "Ok！いいダメージだ！";
+                    break;
+                case TutorialStep.EtherExplanation:
+                    message =
+                        "カードを使用することにより、\n" +
+                        "「エーテルを使用する」";
+                    break;
+                case TutorialStep.UsedEtherExplanation:
+                    message =
+                        "カード使用で画面下部にある手番エーテルが減る！\n" +
+                        "現在のエーテルを見て何が打てるかを見極め" +
+                        "対処しよう！";
+                    illustration = TutorialPageSet.GetUsedEther();
+                    break;
+                case TutorialStep.GuardWarning:
+                    message =
+                        "敵が攻撃してきそうだ。\n" +
+                        "ガードをしよう！";
+                    break;
+                case TutorialStep.NoUsableCards:
+                    message =
+                        "もう使えるカードがないようだ...\n" +
+                        "ターン終了を宣言しよう！";
+                    break;
+                case TutorialStep.CarryExplanation:
+                    message =
+                        "ターン終了宣言をした後は" +
+                        "残ったエーテルが保持される";
+                    break;
+                case TutorialStep.EnemyTurnExplanation:
+                    message =
+                        "敵が行動したら、また自分のターンが来る。\n" +
+                        "その際にエーテルを5つまた回収できる。";
+                    break;
+                case TutorialStep.RefillExplanation:
+                    message =
+                        "左上の未使用エーテルプールを使い切ったら" +
+                        "使用済みエーテルから補充される。\n" +
+                        "これがこのゲームの１ループ！";
+                    break;
+                case TutorialStep.FinalMessage:
+                    message =
+                        "いい感じに敵を捌いて5層踏破を目指そう！\n" +
+                        "深くなるほど敵は強くなるぞ！";
+                    break;
+                default:
+                    return;
+            }
+
+            var layer = UiFactory.CreatePanel(
+                "TutorialDialogLayer",
+                _screenRoot,
+                Vector2.zero,
+                Vector2.one,
+                RequiresTutorialFocus(_tutorialStep)
+                    ? new Color(0f, 0f, 0f, 0f)
+                    : new Color(0f, 0f, 0f, 0.55f));
+            var layerCanvas = layer.gameObject.AddComponent<Canvas>();
+            layerCanvas.overrideSorting = true;
+            layerCanvas.sortingOrder = 100;
+            layer.gameObject.AddComponent<GraphicRaycaster>();
+
+            var hasIllustration = illustration != null;
             var dialog = UiFactory.CreatePanel(
-                "TutorialWelcome",
-                overlay,
-                new Vector2(0.23f, 0.24f),
-                new Vector2(0.77f, 0.76f),
+                "TutorialDialog",
+                layer,
+                hasIllustration
+                    ? new Vector2(0.15f, 0.12f)
+                    : new Vector2(0.22f, 0.28f),
+                hasIllustration
+                    ? new Vector2(0.85f, 0.88f)
+                    : new Vector2(0.78f, 0.72f),
                 new Color32(42, 45, 59, 255));
-            UiFactory.CreateText(
-                "Title",
+            var dialogButton = dialog.gameObject.AddComponent<Button>();
+            dialogButton.onClick.AddListener(AdvanceCurrentTutorialDialog);
+
+            if (hasIllustration)
+            {
+                var imageRect = UiFactory.CreateRect(
+                    "TutorialIllustration",
+                    dialog,
+                    new Vector2(0.06f, 0.43f),
+                    new Vector2(0.94f, 0.92f));
+                var image = imageRect.gameObject.AddComponent<Image>();
+                image.sprite = illustration;
+                image.preserveAspect = true;
+                image.raycastTarget = false;
+            }
+
+            var messageText = UiFactory.CreateText(
+                "TutorialMessage",
                 dialog,
-                new Vector2(0.08f, 0.72f),
-                new Vector2(0.92f, 0.92f),
-                "初めての戦闘",
-                39,
+                hasIllustration
+                    ? new Vector2(0.06f, 0.17f)
+                    : new Vector2(0.07f, 0.25f),
+                hasIllustration
+                    ? new Vector2(0.94f, 0.42f)
+                    : new Vector2(0.93f, 0.82f),
+                message,
+                hasIllustration ? 25 : 30);
+            messageText.raycastTarget = false;
+            var prompt = UiFactory.CreateText(
+                "TutorialAdvancePrompt",
+                dialog,
+                new Vector2(0.08f, 0.04f),
+                new Vector2(0.92f, hasIllustration ? 0.16f : 0.23f),
+                _tutorialStep == TutorialStep.FinalMessage
+                    ? "クリック/タップでチュートリアル終了"
+                    : "クリック/タップで次へ",
+                21,
                 TextAnchor.MiddleCenter,
                 UiFactory.Accent);
-            UiFactory.CreateText(
-                "Message",
-                dialog,
-                new Vector2(0.08f, 0.34f),
-                new Vector2(0.92f, 0.70f),
-                "実際に操作しながら、攻撃・ターン終了・\n" +
-                "エーテル持ち越し・チャージを順に案内します。\n" +
-                "操作はガイド中も自由に行えます。",
-                25);
-            UiFactory.CreateButton(
-                "StartTutorial",
-                dialog,
-                new Vector2(0.52f, 0.10f),
-                new Vector2(0.86f, 0.28f),
-                "ガイドを始める",
-                () =>
-                {
-                    _tutorialStep = TutorialStep.Attack;
-                    EnsureTutorialCardCost(CardKind.Attack);
+            prompt.raycastTarget = false;
+        }
+
+        private void AdvanceCurrentTutorialDialog()
+        {
+            switch (_tutorialStep)
+            {
+                case TutorialStep.Welcome:
+                    ShowTutorialStep(
+                        TutorialStep.AttackIntroduction,
+                        true);
+                    break;
+                case TutorialStep.AttackIntroduction:
+                    ShowTutorialStep(
+                        TutorialStep.AttackExplanation,
+                        true);
+                    break;
+                case TutorialStep.AttackExplanation:
+                    ShowTutorialStep(TutorialStep.AttackFocus, false);
+                    break;
+                case TutorialStep.AttackSuccess:
+                    ShowTutorialStep(
+                        TutorialStep.EtherExplanation,
+                        true);
+                    break;
+                case TutorialStep.EtherExplanation:
+                    ShowTutorialStep(
+                        TutorialStep.UsedEtherExplanation,
+                        true);
+                    break;
+                case TutorialStep.UsedEtherExplanation:
+                    ShowTutorialStep(TutorialStep.GuardWarning, true);
+                    break;
+                case TutorialStep.GuardWarning:
+                    ShowTutorialStep(TutorialStep.GuardFocus, false);
+                    break;
+                case TutorialStep.NoUsableCards:
+                    ShowTutorialStep(TutorialStep.EndTurnFocus, false);
+                    break;
+                case TutorialStep.CarryExplanation:
+                    ShowTutorialStep(
+                        TutorialStep.EnemyTurnExplanation,
+                        true);
+                    break;
+                case TutorialStep.EnemyTurnExplanation:
+                    _tutorialStep = TutorialStep.EnemyTurnResolving;
+                    CompleteTurn(_battle.Pool.GetCurrentTokens().ToList());
+                    break;
+                case TutorialStep.RefillExplanation:
+                    ShowTutorialStep(TutorialStep.FinalMessage, true);
+                    break;
+                case TutorialStep.FinalMessage:
+                    _tutorialStep = TutorialStep.None;
+                    _tutorialCompletedThisSession = true;
                     ShowBattle();
-                },
-                UiFactory.Green,
-                25);
-            UiFactory.CreateButton(
-                "SkipTutorial",
-                dialog,
-                new Vector2(0.14f, 0.10f),
-                new Vector2(0.48f, 0.28f),
-                "今回はスキップ",
-                SkipContextTutorial,
-                new Color32(91, 84, 79, 255),
-                25);
+                    break;
+            }
+        }
+
+        private void ShowTutorialStep(TutorialStep step, bool showDialog)
+        {
+            _tutorialStep = step;
+            ShowBattle();
+            if (showDialog)
+            {
+                ShowCurrentTutorialDialog();
+            }
         }
 
         private bool AdvanceTutorialAfterCard(CardKind usedKind)
         {
-            if (_tutorialStep == TutorialStep.Attack &&
+            if (_tutorialStep == TutorialStep.AttackFocus &&
                 usedKind == CardKind.Attack)
             {
-                _tutorialStep = TutorialStep.EndTurn;
-                return false;
+                _tutorialStep = TutorialStep.AttackSuccess;
+                return true;
             }
 
-            if (_tutorialStep == TutorialStep.Charge &&
-                usedKind == CardKind.Charge)
+            if (_tutorialStep == TutorialStep.GuardFocus &&
+                usedKind == CardKind.Defense)
             {
-                _tutorialStep = TutorialStep.None;
-                _tutorialCompletedThisSession = true;
+                _tutorialStep = TutorialStep.NoUsableCards;
                 return true;
             }
 
             return false;
-        }
-
-        private void ShowTutorialCompletion()
-        {
-            ShowMessageDialog(
-                "操作ガイド完了",
-                "基本操作は完了です。\n" +
-                "デッキ内カードのコスト合計が、戦闘で使う\n" +
-                "エーテル全体の色と個数になります。\n" +
-                "詳しい説明は「遊び方」から確認できます。");
-        }
-
-        private void SkipContextTutorial()
-        {
-            _tutorialStep = TutorialStep.None;
-            _tutorialCompletedThisSession = true;
-            if (_battle != null && _battle.Phase == BattlePhase.PlayerTurn)
-            {
-                ShowBattle();
-            }
-        }
-
-        private void EnsureTutorialCardCostForCurrentStep()
-        {
-            if (_battle == null ||
-                _battle.Phase != BattlePhase.PlayerTurn)
-            {
-                return;
-            }
-
-            if (_tutorialStep == TutorialStep.Attack)
-            {
-                EnsureTutorialCardCost(CardKind.Attack);
-            }
-            else if (_tutorialStep == TutorialStep.Charge)
-            {
-                EnsureTutorialCardCost(CardKind.Charge);
-            }
-        }
-
-        private bool EnsureTutorialCardCost(CardKind kind)
-        {
-            var cost = CardCatalog.GetCost(kind);
-            if (_battle.Pool.CurrentTotal < cost.Values.Sum())
-            {
-                return false;
-            }
-
-            foreach (var pair in cost)
-            {
-                while (_battle.Pool.Current[pair.Key] < pair.Value)
-                {
-                    Dictionary<EtherType, int> source;
-                    if (_battle.Pool.Unused[pair.Key] > 0)
-                    {
-                        source = _battle.Pool.Unused;
-                    }
-                    else if (_battle.Pool.Spent[pair.Key] > 0)
-                    {
-                        source = _battle.Pool.Spent;
-                    }
-                    else
-                    {
-                        return false;
-                    }
-
-                    EtherType? exchangeType = null;
-                    foreach (EtherType type in Enum.GetValues(typeof(EtherType)))
-                    {
-                        var required = cost.TryGetValue(type, out var value)
-                            ? value
-                            : 0;
-                        if (_battle.Pool.Current[type] > required)
-                        {
-                            exchangeType = type;
-                            break;
-                        }
-                    }
-
-                    if (!exchangeType.HasValue)
-                    {
-                        return false;
-                    }
-
-                    source[pair.Key]--;
-                    _battle.Pool.Current[pair.Key]++;
-                    _battle.Pool.Current[exchangeType.Value]--;
-                    source[exchangeType.Value]++;
-                }
-            }
-
-            return true;
         }
 
         private void ShowTutorialBook(int pageIndex)
@@ -4504,26 +4726,19 @@ namespace LostPage
             if (Array.IndexOf(arguments, "-lostPageCaptureTutorialGuide") >= 0)
             {
                 _tutorialCompletedThisSession = false;
-                _tutorialOfferedThisSession = true;
+                _tutorialOfferedThisSession = false;
                 TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
-                _tutorialStep = TutorialStep.Attack;
-                EnsureTutorialCardCost(CardKind.Attack);
+                _tutorialStep = TutorialStep.AttackFocus;
                 ShowBattle();
             }
 
             if (captureTutorialFlow)
             {
                 _tutorialCompletedThisSession = false;
-                _tutorialOfferedThisSession = true;
+                _tutorialOfferedThisSession = false;
                 TravelToStageForValidation(StageKind.Battle);
                 StartBattle();
-                _tutorialStep = TutorialStep.Attack;
-                EnsureTutorialCardCost(CardKind.Attack);
-                _selectedCard = _session.Player.Deck.First(
-                    card => card.Kind == CardKind.Attack);
-                UseSelectedCard();
-                ShowCarrySelection();
             }
 
             if (captureCardScroll)
@@ -4959,16 +5174,179 @@ namespace LostPage
 
             if (captureTutorialFlow)
             {
-                for (var index = 0; index < 2; index++)
+                if (_tutorialStep != TutorialStep.Welcome ||
+                    FindTutorialObject(_screenRoot, "TutorialDialog") == null ||
+                    _battle.Enemies.Count != 2 ||
+                    _battle.Enemies.Any(enemy => enemy.MaxHp != 20) ||
+                    _battle.Pool.Current[EtherType.Red] != 3 ||
+                    _battle.Pool.Current[EtherType.Blue] != 1 ||
+                    _battle.Pool.Current[EtherType.Yellow] != 1 ||
+                    _battle.Pool.Current[EtherType.Purple] != 0)
                 {
-                    var token = GameObject.Find($"Token_{index}");
-                    token?.GetComponent<Button>()?.onClick.Invoke();
+                    throw new InvalidOperationException(
+                        "チュートリアル戦闘の開始状態が不正です。");
                 }
 
-                GameObject.Find("Confirm")?.GetComponent<Button>()?.onClick.Invoke();
-                _selectedCard = _session.Player.Deck.First(
-                    card => card.Kind == CardKind.Charge);
-                UseSelectedCard();
+                AdvanceCurrentTutorialDialog();
+                if (_tutorialStep != TutorialStep.AttackIntroduction ||
+                    FindTutorialObject(_screenRoot, "TutorialDialog") == null)
+                {
+                    throw new InvalidOperationException(
+                        "攻撃導入工程へ進みませんでした。");
+                }
+
+                AdvanceCurrentTutorialDialog();
+                if (_tutorialStep != TutorialStep.AttackExplanation ||
+                    FindTutorialObject(
+                        _screenRoot,
+                        "TutorialFocusOverlay") == null ||
+                    FindTutorialObject(_screenRoot, "CardScroll")
+                        .GetComponent<Canvas>() == null ||
+                    FindTutorialObject(
+                        _screenRoot,
+                        $"Enemy_{TutorialTargetEnemyIndex}")
+                        .GetComponent<Canvas>() == null)
+                {
+                    throw new InvalidOperationException(
+                        "攻撃説明工程のフォーカスが不正です。");
+                }
+
+                AdvanceCurrentTutorialDialog();
+                var selectedCardObject = FindTutorialObject(
+                    _screenRoot,
+                    $"Card_{_selectedCard.Id}");
+                if (_tutorialStep != TutorialStep.AttackFocus ||
+                    FindTutorialObject(
+                        _screenRoot,
+                        "TutorialFocusOverlay") == null ||
+                    FindTutorialObject(
+                        _screenRoot,
+                        "TutorialArrow") == null ||
+                    selectedCardObject == null ||
+                    selectedCardObject.GetComponent<Canvas>() == null ||
+                    selectedCardObject.GetComponent<GraphicRaycaster>() == null)
+                {
+                    throw new InvalidOperationException(
+                        "攻撃操作工程のフォーカスが不正です。");
+                }
+
+                yield return null;
+
+                ExecuteCardDragForValidation(
+                    CardKind.Attack,
+                    "Enemy_0",
+                    true);
+                yield return null;
+                if (_battle.Enemies[0].Hp != 20 ||
+                    FindTutorialObject(
+                        _screenRoot,
+                        "TutorialFocusOverlay") == null)
+                {
+                    throw new InvalidOperationException(
+                        "左側の敵への誤ドロップを拒否できませんでした。");
+                }
+
+                var attackFocus = FindTutorialObject(
+                    _screenRoot,
+                    "TutorialFocusOverlay");
+                FindTutorialObject(_screenRoot, "UseCard")
+                    .GetComponent<Button>()
+                    .onClick.Invoke();
+                if (attackFocus.gameObject.activeSelf)
+                {
+                    throw new InvalidOperationException(
+                        "攻撃操作開始時にグレーアウトが解除されませんでした。");
+                }
+
+                yield return new WaitForSecondsRealtime(1.2f);
+                if (_tutorialStep != TutorialStep.AttackSuccess ||
+                    _battle.Enemies[TutorialTargetEnemyIndex].Hp != 15 ||
+                    FindTutorialObject(_screenRoot, "TutorialDialog") == null)
+                {
+                    throw new InvalidOperationException(
+                        "チュートリアル攻撃成功工程へ進みませんでした。");
+                }
+
+                AdvanceCurrentTutorialDialog();
+                if (_tutorialStep != TutorialStep.EtherExplanation ||
+                    FindTutorialObject(
+                        _screenRoot,
+                        "TutorialFocusOverlay") == null)
+                {
+                    throw new InvalidOperationException(
+                        "手番エーテル説明工程の表示が不正です。");
+                }
+
+                AdvanceCurrentTutorialDialog();
+                var tutorialIllustration =
+                    FindTutorialObject(_screenRoot, "TutorialIllustration")
+                        ?.GetComponent<Image>();
+                if (_tutorialStep != TutorialStep.UsedEtherExplanation ||
+                    tutorialIllustration == null ||
+                    tutorialIllustration.sprite != TutorialPageSet.GetUsedEther())
+                {
+                    throw new InvalidOperationException(
+                        "使用済みエーテル画像の表示が不正です。");
+                }
+
+                AdvanceCurrentTutorialDialog();
+                AdvanceCurrentTutorialDialog();
+                if (_tutorialStep != TutorialStep.GuardFocus)
+                {
+                    throw new InvalidOperationException(
+                        "防御カード操作工程へ進みませんでした。");
+                }
+
+                FindTutorialObject(_screenRoot, "UseCard")
+                    .GetComponent<Button>()
+                    .onClick.Invoke();
+                yield return new WaitForSecondsRealtime(0.8f);
+                if (_tutorialStep != TutorialStep.NoUsableCards ||
+                    _battle.HasUsableCard ||
+                    _battle.Pool.CurrentTotal != 1)
+                {
+                    throw new InvalidOperationException(
+                        "防御後の使用可能カードまたはエーテル状態が不正です。");
+                }
+
+                AdvanceCurrentTutorialDialog();
+                FindTutorialObject(_screenRoot, "EndTurn")
+                    .GetComponent<Button>()
+                    .onClick.Invoke();
+                if (_tutorialStep != TutorialStep.CarryExplanation ||
+                    FindTutorialObject(
+                        _screenRoot,
+                        "TutorialFocusOverlay") == null)
+                {
+                    throw new InvalidOperationException(
+                        "ターン終了後の持ち越し説明工程が不正です。");
+                }
+
+                AdvanceCurrentTutorialDialog();
+                AdvanceCurrentTutorialDialog();
+                yield return new WaitForSecondsRealtime(0.5f);
+                if (_tutorialStep != TutorialStep.RefillExplanation ||
+                    _battle.TurnNumber != 2 ||
+                    _battle.Pool.CurrentTotal != 6)
+                {
+                    throw new InvalidOperationException(
+                        "敵行動後のエーテル再配布工程が不正です。");
+                }
+
+                AdvanceCurrentTutorialDialog();
+                if (_tutorialStep != TutorialStep.FinalMessage)
+                {
+                    throw new InvalidOperationException(
+                        "チュートリアル最終工程へ進みませんでした。");
+                }
+
+                AdvanceCurrentTutorialDialog();
+                if (_tutorialStep != TutorialStep.None ||
+                    !_tutorialCompletedThisSession)
+                {
+                    throw new InvalidOperationException(
+                        "チュートリアルが完了状態になりませんでした。");
+                }
             }
 
             if (captureTutorialSwipe)

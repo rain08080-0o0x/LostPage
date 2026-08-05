@@ -273,6 +273,44 @@ namespace LostPage
                 Random);
         }
 
+        internal BattleModel CreateTutorialBattleForCurrentNode()
+        {
+            if (CurrentNode.Kind != StageKind.Battle)
+            {
+                throw new InvalidOperationException(
+                    "チュートリアル戦闘は通常戦闘ステージで開始してください。");
+            }
+
+            var enemies = new[]
+            {
+                new EnemyState(
+                    "紙喰らい",
+                    20,
+                    7,
+                    6,
+                    EnemyActionKind.Attack,
+                    EnemyActionKind.Defense,
+                    EnemyActionKind.Weaken),
+                new EnemyState(
+                    "墨の影A",
+                    20,
+                    6,
+                    5,
+                    EnemyActionKind.Attack,
+                    EnemyActionKind.Weaken,
+                    EnemyActionKind.Defense)
+            };
+            var initialDraw = new[]
+            {
+                EtherType.Red,
+                EtherType.Red,
+                EtherType.Red,
+                EtherType.Blue,
+                EtherType.Yellow
+            };
+            return new BattleModel(Player, enemies, Random, initialDraw);
+        }
+
         public int CompleteCurrentBattle(int defeatedEnemyCount)
         {
             if (CurrentNode.Kind == StageKind.Boss &&

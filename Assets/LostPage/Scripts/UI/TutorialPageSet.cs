@@ -14,6 +14,8 @@ namespace LostPage
             "TutorialPage_04",
             "TutorialPage_05"
         };
+        private const string ArrowObjectName = "TutorialArrowTexture";
+        private const string UsedEtherObjectName = "TutorialUsedEtherTexture";
 
         [SerializeField] private Sprite[] pages;
 
@@ -54,6 +56,25 @@ namespace LostPage
             var spriteRenderer = pageObject == null
                 ? null
                 : pageObject.GetComponent<SpriteRenderer>();
+            return spriteRenderer == null ? null : spriteRenderer.sprite;
+        }
+
+        public static Sprite GetArrow()
+        {
+            return GetSceneSprite(ArrowObjectName);
+        }
+
+        public static Sprite GetUsedEther()
+        {
+            return GetSceneSprite(UsedEtherObjectName);
+        }
+
+        private static Sprite GetSceneSprite(string objectName)
+        {
+            var spriteObject = GameObject.Find(objectName);
+            var spriteRenderer = spriteObject == null
+                ? null
+                : spriteObject.GetComponent<SpriteRenderer>();
             return spriteRenderer == null ? null : spriteRenderer.sprite;
         }
 

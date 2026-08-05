@@ -47,6 +47,15 @@ namespace LostPage
             PlayerState player,
             IEnumerable<EnemyState> enemies,
             Random random)
+            : this(player, enemies, random, null)
+        {
+        }
+
+        internal BattleModel(
+            PlayerState player,
+            IEnumerable<EnemyState> enemies,
+            Random random,
+            IReadOnlyList<EtherType> initialDraw)
         {
             _player = player ?? throw new ArgumentNullException(nameof(player));
             _random = random ?? throw new ArgumentNullException(nameof(random));
@@ -75,7 +84,7 @@ namespace LostPage
             PendingAttackExecutions = 1;
             Pool = new EtherPool(_player.Deck, _random);
             ActivateLargeBelt();
-            TurnStartMessage = BeginPlayerTurn();
+            TurnStartMessage = BeginPlayerTurn(initialDraw);
         }
 
         public IReadOnlyList<EnemyState> Enemies { get; }
@@ -1467,7 +1476,8 @@ namespace LostPage
             }
         }
 
-        private string BeginPlayerTurn()
+        private string BeginPlayerTurn(
+            IReadOnlyList<EtherType> presetDraw = null)
         {
             Phase = BattlePhase.PlayerTurn;
             TurnNumber++;
@@ -1539,7 +1549,9 @@ namespace LostPage
                 }
             }
 
-            var drawn = Pool.Draw(_player.GetEtherDrawCount());
+            var drawn = presetDraw == null
+                ? Pool.Draw(_player.GetEtherDrawCount())
+                : Pool.DrawPreset(presetDraw);
             LastDrawnEtherTypes = drawn;
             LastRefilledEtherTypes = Pool.LastRefilledEtherTypes.ToArray();
             LastEtherRefillDrawIndex = Pool.LastRefillDrawIndex;

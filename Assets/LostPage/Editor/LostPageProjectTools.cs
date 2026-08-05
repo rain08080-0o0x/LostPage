@@ -44,7 +44,7 @@ namespace LostPage.Editor
 
             PlayerSettings.companyName = "LostPagePrototype";
             PlayerSettings.productName = "Lost Page";
-            PlayerSettings.bundleVersion = "1.2.4";
+            PlayerSettings.bundleVersion = "1.3.1";
             PlayerSettings.defaultScreenWidth = 1920;
             PlayerSettings.defaultScreenHeight = 1080;
             PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
@@ -59,7 +59,7 @@ namespace LostPage.Editor
                 "com.lostpage.prototype");
             PlayerSettings.Android.minSdkVersion = AndroidSdkVersions.AndroidApiLevel26;
             PlayerSettings.Android.targetSdkVersion = AndroidSdkVersions.AndroidApiLevelAuto;
-            PlayerSettings.Android.bundleVersionCode = 10;
+            PlayerSettings.Android.bundleVersionCode = 11;
 
             AssetDatabase.SaveAssets();
             Debug.Log("LOSTPAGE_SETUP_OK");
@@ -115,6 +115,16 @@ namespace LostPage.Editor
                     $"TutorialPage_{index + 1:00}",
                     pages[index]);
             }
+
+
+            CreateSpriteReference(
+                pageObject.transform,
+                "TutorialArrowTexture",
+                ImportSprite($"{TutorialTextureRoot}/arrow.png"));
+            CreateSpriteReference(
+                pageObject.transform,
+                "TutorialUsedEtherTexture",
+                ImportSprite($"{TutorialTextureRoot}/used_ether.png"));
         }
 
         private static void CreateAttackEffectSet()
@@ -247,6 +257,14 @@ namespace LostPage.Editor
                 AssetDatabase.LoadAssetAtPath<Sprite>(
                     $"{EtherTextureRoot}/NotUse.png") != null,
                 "エーテル不足画像");
+            Require(
+                AssetDatabase.LoadAssetAtPath<Sprite>(
+                    $"{TutorialTextureRoot}/arrow.png") != null,
+                "チュートリアル矢印画像");
+            Require(
+                AssetDatabase.LoadAssetAtPath<Sprite>(
+                    $"{TutorialTextureRoot}/used_ether.png") != null,
+                "チュートリアル使用済みエーテル画像");
 
             var session = new RunSession(12345);
             Require(session.Player.MaxHp == 100, "プレイヤー最大HP");
